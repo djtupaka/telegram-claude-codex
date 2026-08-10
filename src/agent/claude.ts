@@ -12,6 +12,7 @@ import {
   getSessionProject,
   listAllSessions,
 } from "./claude-history";
+import { userTurns } from "./claude-input";
 import { readExecutorMcpServers } from "./executor-mcp";
 import type { AgentEvent, AgentProvider, RunOptions } from "./types";
 
@@ -255,36 +256,45 @@ const buildFileSystemPrompt = (chatId: number) => {
  * ambient ~/.claude/settings.json. `mcpServers` carries the Executor MCP server
  * when configured (undefined otherwise, so the key is simply omitted).
  */
-const buildQuery = (
+const buildOptions = (
   opts: RunOptions,
   signal: AbortSignal,
   settings: Settings,
   mcpServers: Options["mcpServers"]
-) => {
+): Options => {
   const abortController = new AbortController();
   signal.addEventListener("abort", () => abortController.abort(), {
     once: true,
   });
+  // Effort overrides the boot-resolved settings for this run only; model is a
+  // plain alias/id passed straight through. "default" sentinel = no override.
+  const effort =
+    opts.effort && opts.effort !== "default"
+      ? (opts.effort as Settings["effortLevel"])
+      : undefined;
   const options: Options = {
     cwd: opts.projectDir,
     permissionMode: "bypassPermissions",
     allowDangerouslySkipPermissions: true,
     abortController,
     includePartialMessages: true,
-    settings,
+    settings: effort ? { ...settings, effortLevel: effort } : settings,
     systemPrompt: {
       type: "preset",
       preset: "claude_code",
       append: buildFileSystemPrompt(opts.chatId),
     },
   };
+  if (opts.model && opts.model !== "default") {
+    options.model = opts.model;
+  }
   if (mcpServers) {
     options.mcpServers = mcpServers;
   }
   if (opts.sessionId) {
     options.resume = opts.sessionId;
   }
-  return { prompt: opts.prompt, options };
+  return options;
 };
 
 /** Boot-resolved per-run inputs (hardening settings + Executor MCP wiring). */
@@ -298,6 +308,14 @@ const readRunConfig = Effect.all({
  * AgentEvents. Text/thinking are sourced from streamed partial messages;
  * tool_use and plan_ready from the complete assistant messages; subagent
  * lifecycle from task_started/task_notification system messages.
+ *
+ * Runs in streaming-input mode so background tasks (dynamic workflows,
+ * backgrounded subagents) can report completion back to the same agent, which
+ * then continues acting on the result. The session is held open across turns
+ * and closed only when a turn ends with no live background tasks remaining
+ * (tracked via `background_tasks_changed`, which carries the full live set), or
+ * on abort. A run with no background tasks behaves exactly as before: one turn,
+ * one result, immediate close.
  */
 async function* run(
   opts: RunOptions,
@@ -310,10 +328,18 @@ async function* run(
   };
   let sawStreamEvents = false;
 
+  const liveTasks = new Set<string>();
+  let closeInput: () => void = () => {
+    // replaced by the promise executor below
+  };
+  const closed = new Promise<void>((resolve) => {
+    closeInput = resolve;
+  });
+  signal.addEventListener("abort", () => closeInput(), { once: true });
+
   const { settings, mcpServers } = runtime.runSync(readRunConfig);
-  for await (const msg of query(
-    buildQuery(opts, signal, settings, mcpServers)
-  )) {
+  const options = buildOptions(opts, signal, settings, mcpServers);
+  for await (const msg of query({ prompt: userTurns(opts, closed), options })) {
     if (msg.type === "stream_event") {
       sawStreamEvents = true;
       yield* handlePartialEvent(state, msg.event);
@@ -321,7 +347,18 @@ async function* run(
       yield* handleAssistantBlocks(state, msg.message.content, sawStreamEvents);
     } else if (msg.type === "result") {
       yield* handleResultMessage(msg);
+      // Turn ended: end the session only when no background work is pending,
+      // else stay open so the task's completion re-drives the agent.
+      if (liveTasks.size === 0) {
+        closeInput();
+      }
     } else if (msg.type === "system") {
+      if (msg.subtype === "background_tasks_changed") {
+        liveTasks.clear();
+        for (const task of msg.tasks) {
+          liveTasks.add(task.task_id);
+        }
+      }
       yield* handleSystemMessage(msg);
     }
   }
@@ -338,6 +375,20 @@ export const claudeProvider: AgentProvider = {
     cost: true,
     subagents: true,
   },
+  models: [
+    { id: "default", label: "Default" },
+    { id: "opus", label: "Opus" },
+    { id: "sonnet", label: "Sonnet" },
+    { id: "haiku", label: "Haiku" },
+    { id: "fable", label: "Fable" },
+  ],
+  effortLevels: [
+    { id: "low", label: "Low" },
+    { id: "medium", label: "Medium" },
+    { id: "high", label: "High" },
+    { id: "xhigh", label: "Extra high" },
+  ],
+  defaultEffort: "high",
   run,
   listAllSessions,
   getSessionProject,

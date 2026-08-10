@@ -4,13 +4,13 @@ import {
   Codex,
   type CodexOptions,
   type FileChangeItem,
+  type ModelReasoningEffort,
   type ThreadEvent,
   type ThreadItem,
   type ThreadOptions,
   type Usage,
 } from "@openai/codex-sdk";
 import { runtime } from "../runtime";
-import { codexThreadOverrides } from "./codex-config";
 import {
   clearSessionCache,
   getSessionProject,
@@ -279,9 +279,11 @@ const threadOptions = (opts: RunOptions): ThreadOptions => ({
   sandboxMode: "danger-full-access",
   approvalPolicy: "never",
   skipGitRepoCheck: true,
-  // Modello ed effort del bot, indipendenti da ~/.codex/config.toml (che resta
-  // valido per la CLI di sistema). Se le env non ci sono, eredita la config.
-  ...codexThreadOverrides(),
+  // "default" sentinel = leave the Codex default in place.
+  ...(opts.model && opts.model !== "default" ? { model: opts.model } : {}),
+  ...(opts.effort && opts.effort !== "default"
+    ? { modelReasoningEffort: opts.effort as ModelReasoningEffort }
+    : {}),
 });
 
 /**
@@ -378,6 +380,20 @@ export const codexProvider: AgentProvider = {
     cost: false,
     subagents: false,
   },
+  models: [
+    { id: "default", label: "Default" },
+    { id: "gpt-5.6-sol", label: "Sol (flagship)" },
+    { id: "gpt-5.6-terra", label: "Terra (balanced)" },
+    { id: "gpt-5.6-luna", label: "Luna (fast)" },
+  ],
+  effortLevels: [
+    { id: "minimal", label: "Minimal" },
+    { id: "low", label: "Low" },
+    { id: "medium", label: "Medium" },
+    { id: "high", label: "High" },
+    { id: "xhigh", label: "Extra high" },
+  ],
+  defaultEffort: "medium",
   run,
   listAllSessions,
   getSessionProject,
