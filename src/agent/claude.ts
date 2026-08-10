@@ -14,6 +14,7 @@ import {
 } from "./claude-history";
 import { userTurns } from "./claude-input";
 import { readExecutorMcpServers } from "./executor-mcp";
+import { buildFileSystemPrompt } from "./file-send";
 import type { AgentEvent, AgentProvider, RunOptions } from "./types";
 
 /** The raw Anthropic stream event carried by an SDK partial-assistant message. */
@@ -232,19 +233,6 @@ function* handleResultMessage(msg: ResultMessage): Generator<AgentEvent> {
     yield { kind: "error", message: msg.errors.join("; ") || msg.subtype };
   }
 }
-
-const SCRIPT_DIR = new URL("../../scripts", import.meta.url).pathname;
-
-/** Build the system-prompt snippet telling Claude how to send files to `chatId`. */
-const buildFileSystemPrompt = (chatId: number) => {
-  const scriptPath = `${SCRIPT_DIR}/send-file-to-user.ts`;
-  return [
-    "You can send files to the user's Telegram chat.",
-    `To send a file, run: bun ${scriptPath} --path <absolute-file-path> --chat ${chatId}`,
-    "Only use this when the user explicitly asks you to send/share/download a file.",
-    "The script blocks .env and other sensitive files automatically.",
-  ].join(" ");
-};
 
 /**
  * Build the pure `query()` params for a run. Keeps Claude Code's default system

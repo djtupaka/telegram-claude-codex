@@ -1643,7 +1643,12 @@ export function createBot(
     const res = await fetch(url);
     const buffer = Buffer.from(await res.arrayBuffer());
 
-    const dir = join(state.activeProject, "user-sent-files");
+    // UPLOADS_DIR (opzionale): cartella unica di staging fuori dai progetti.
+    // Se non impostata si usa il default upstream <progetto>/user-sent-files.
+    const base = process.env.UPLOADS_DIR?.trim();
+    const dir = base
+      ? join(base, new Date().toISOString().slice(0, 10))
+      : join(state.activeProject, "user-sent-files");
     mkdirSync(dir, { recursive: true });
     const dest = join(dir, basename(filename));
     writeFileSync(dest, buffer);

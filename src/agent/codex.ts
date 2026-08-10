@@ -11,6 +11,7 @@ import {
   type Usage,
 } from "@openai/codex-sdk";
 import { runtime } from "../runtime";
+import { sanitizeCodexEnv } from "./codex-env";
 import {
   clearSessionCache,
   getSessionProject,
@@ -21,6 +22,7 @@ import {
   readExecutorMcpServers,
   toCodexMcpServers,
 } from "./executor-mcp";
+import { buildFileSystemPrompt } from "./file-send";
 import type { AgentEvent, AgentProvider, RunOptions } from "./types";
 
 const ZSH_WRAPPER = /^\/bin\/\w+ -lc /;
@@ -222,24 +224,6 @@ function* mapThreadEvent(
   }
 }
 
-const SCRIPT_DIR = new URL("../../scripts", import.meta.url).pathname;
-
-/**
- * Build instruction text telling Codex how to send files to the user's chat.
- * Mirrors claude.ts's buildFileSystemPrompt; Codex has no system-prompt hook,
- * so this is prepended to the prompt instead. The chatId rides the `--chat`
- * arg so no `TELEGRAM_CHAT_ID` env injection is needed.
- */
-const buildFileSystemPrompt = (chatId: number) => {
-  const scriptPath = `${SCRIPT_DIR}/send-file-to-user.ts`;
-  return [
-    "You can send files to the user's Telegram chat.",
-    `To send a file, run: bun ${scriptPath} --path <absolute-file-path> --chat ${chatId}`,
-    "Only use this when the user explicitly asks you to send/share/download a file.",
-    "The script blocks .env and other sensitive files automatically.",
-  ].join(" ");
-};
-
 /**
  * Build the plan-mode convention instruction. Codex has no native
  * plan-mode/ExitPlanMode signal, so it is taught the `.codex/plans/`
@@ -287,33 +271,17 @@ const threadOptions = (opts: RunOptions): ThreadOptions => ({
 });
 
 /**
- * Build the Codex process options. The env is the bot's own env minus
- * `CLAUDECODE` (its presence confuses Codex); passing `env` means the SDK does
- * not additionally inherit `process.env`. Codex's default shell-environment
- * policy strips `*TOKEN*` names, which would hide `BOT_TOKEN` from the
- * send-file script, so it is force-set for the shell tool via config. The
- * Executor MCP server, when configured, rides the same config object.
+ * Build the Codex process options. Bot-only credentials are removed from the
+ * child environment; the explicitly authorized file sender loads the private
+ * env file only for its own short-lived process. Executor MCP configuration,
+ * when present, remains scoped to Codex's config object.
  */
 const codexOptions = (
   mcpServers?: Record<string, HttpMcpServer>
 ): CodexOptions => {
-  const { CLAUDECODE: _drop, ...rest } = process.env;
-  const env = Object.fromEntries(
-    Object.entries(rest).filter(
-      (entry): entry is [string, string] => entry[1] !== undefined
-    )
-  );
-  const botToken = process.env.BOT_TOKEN;
+  const env = sanitizeCodexEnv();
   const mcp = toCodexMcpServers(mcpServers);
   const config: NonNullable<CodexOptions["config"]> = {
-    ...(botToken
-      ? {
-          shell_environment_policy: {
-            inherit: "all",
-            set: { BOT_TOKEN: botToken },
-          },
-        }
-      : {}),
     ...(mcp ? { mcp_servers: mcp } : {}),
   };
   return Object.keys(config).length > 0 ? { env, config } : { env };
