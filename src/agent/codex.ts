@@ -10,6 +10,7 @@ import {
   type Usage,
 } from "@openai/codex-sdk";
 import { runtime } from "../runtime";
+import { codexThreadOverrides } from "./codex-config";
 import {
   clearSessionCache,
   getSessionProject,
@@ -278,6 +279,9 @@ const threadOptions = (opts: RunOptions): ThreadOptions => ({
   sandboxMode: "danger-full-access",
   approvalPolicy: "never",
   skipGitRepoCheck: true,
+  // Modello ed effort del bot, indipendenti da ~/.codex/config.toml (che resta
+  // valido per la CLI di sistema). Se le env non ci sono, eredita la config.
+  ...codexThreadOverrides(),
 });
 
 /**

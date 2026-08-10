@@ -18,6 +18,7 @@ import {
   runAgent,
   stopAgent,
 } from "./agent";
+import { formatCodexStatus } from "./agent/codex-config";
 import { classifyOutcome, runOutcomeOf } from "./agent/errors";
 import { listProviders } from "./agent/registry";
 import {
@@ -644,9 +645,11 @@ export function createBot(
     const composeLine = state.composeMessages
       ? `\nComposing: ${state.composeMessages.length} messages`
       : "";
+    const codexConfigLine =
+      state.activeProvider === "codex" ? `\n${formatCodexStatus()}` : "";
 
     await ctx.reply(
-      `Provider: ${activeProviderName(state)}\nProject: ${project}\nRunning: ${running}\nSessions: ${sessionCount}${branchLine}${queueLine}${composeLine}`,
+      `Provider: ${activeProviderName(state)}${codexConfigLine}\nProject: ${project}\nRunning: ${running}\nSessions: ${sessionCount}${branchLine}${queueLine}${composeLine}`,
       { reply_markup: mainKeyboard }
     );
   });
