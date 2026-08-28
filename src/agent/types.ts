@@ -57,9 +57,9 @@ export interface RunOptions {
 
 /** Sanitized metadata for one currently active provider run. */
 export interface ActiveRunSnapshot {
-  provider: ProviderId;
-  runId: string;
-  startedAt: number;
+  readonly provider: ProviderId;
+  readonly runId: string;
+  readonly startedAt: number;
 }
 
 /** A selectable option (model or reasoning effort). `id` `"default"` clears any override. */

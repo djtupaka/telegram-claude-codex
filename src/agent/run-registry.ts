@@ -164,7 +164,10 @@ const make = Effect.gen(function* () {
   const has = (userId: number) => FiberMap.has(fibers, userId);
 
   const snapshot = (userId: number) =>
-    Effect.sync(() => activeRuns.get(userId));
+    Effect.sync(() => {
+      const value = activeRuns.get(userId);
+      return value ? { ...value } : undefined;
+    });
 
   /** Shutdown: interrupt every run and await settle, bounded. */
   const stopAll = FiberMap.clear(fibers).pipe(

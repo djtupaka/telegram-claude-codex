@@ -212,9 +212,16 @@ describe("RunRegistry — subprocess lifecycle (fake sh provider)", () => {
       );
       await new Promise((resolve) => setTimeout(resolve, 100));
       expect(await rt.runPromise(hasRun(899))).toBe(true);
-      expect(await rt.runPromise(getRunSnapshot(899))).toMatchObject({
+      const snapshot = await rt.runPromise(getRunSnapshot(899));
+      expect(snapshot).toMatchObject({
         runId: "run-899",
         provider: "codex",
+      });
+      if (snapshot) {
+        (snapshot as { runId: string }).runId = "caller-mutated";
+      }
+      expect(await rt.runPromise(getRunSnapshot(899))).toMatchObject({
+        runId: "run-899",
       });
 
       await rt.runPromise(stopRun(899, "stopped"));
