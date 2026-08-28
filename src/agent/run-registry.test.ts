@@ -9,7 +9,13 @@ import {
   ProcessFailed,
   ProviderCrashed,
 } from "./errors";
-import { hasRun, RunRegistry, startRun, stopRun } from "./run-registry";
+import {
+  getRunSnapshot,
+  hasRun,
+  RunRegistry,
+  startRun,
+  stopRun,
+} from "./run-registry";
 import type { AgentEvent, EventQueue, ProviderSpec, RunOptions } from "./types";
 
 /**
@@ -17,7 +23,10 @@ import type { AgentEvent, EventQueue, ProviderSpec, RunOptions } from "./types";
  * never touch env, the global runtime, or a real provider CLI. `maxConcurrentRuns`
  * sizes the shared semaphore under test.
  */
-const makeRuntime = (maxConcurrentRuns: number) => {
+const makeRuntime = (
+  maxConcurrentRuns: number,
+  runTimeoutMs: Option.Option<number> = Option.none()
+) => {
   const cfg = {
     botToken: Redacted.make("x"),
     allowedUserId: 1,
@@ -28,7 +37,7 @@ const makeRuntime = (maxConcurrentRuns: number) => {
     executorApiKey: Option.none(),
     draftIntervalMs: 300,
     splitAt: 4000,
-    runTimeoutMs: Option.none(),
+    runTimeoutMs,
     maxConcurrentRuns,
     eventLogPath: ".data/events.jsonl",
     claudeSettings: {},
@@ -64,6 +73,7 @@ const makeOpts = (userId: number): RunOptions => ({
   chatId: userId,
   projectDir: process.cwd(),
   prompt: "",
+  runId: `run-${userId}`,
   userId,
 });
 
@@ -153,6 +163,71 @@ describe("RunRegistry.stop on unknown user", () => {
 });
 
 describe("RunRegistry — subprocess lifecycle (fake sh provider)", () => {
+  test("enforces RUN_TIMEOUT_MS and clears both fiber and active metadata", async () => {
+    const rt = makeRuntime(4, Option.some(80));
+    try {
+      const queue = await rt.runPromise(
+        startRun(makeSpec("sleep 30"), makeOpts(901))
+      );
+
+      expect(await rt.runPromise(getRunSnapshot(901))).toMatchObject({
+        runId: "run-901",
+        provider: "claude",
+      });
+
+      const terminal = await takeEvent(rt, queue);
+      expect(terminal.kind).toBe("error");
+      if (terminal.kind === "error") {
+        expect(terminal.class?._tag).toBe("AgentTimedOut");
+        expect(terminal.message).toBe("Timed out.");
+      }
+
+      expect(
+        await waitUntil(
+          async () =>
+            !(await rt.runPromise(hasRun(901))) &&
+            (await rt.runPromise(getRunSnapshot(901))) === undefined
+        )
+      ).toBe(true);
+    } finally {
+      await rt.dispose();
+    }
+  });
+
+  test("keeps replacement metadata when the interrupted prior run exits", async () => {
+    const rt = makeRuntime(4);
+    try {
+      const first = makeOpts(902);
+      first.runId = "old-run";
+      const firstQueue = await rt.runPromise(
+        startRun(makeSpec("echo old; sleep 30"), first)
+      );
+      expect((await takeEvent(rt, firstQueue)).kind).toBe("text_delta");
+
+      const replacement = makeOpts(902);
+      replacement.runId = "new-run";
+      await rt.runPromise(
+        startRun(makeSpec("echo new; sleep 30"), replacement)
+      );
+
+      expect(
+        await waitUntil(async () => {
+          const snapshot = await rt.runPromise(getRunSnapshot(902));
+          return snapshot?.runId === "new-run";
+        })
+      ).toBe(true);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(await rt.runPromise(getRunSnapshot(902))).toMatchObject({
+        runId: "new-run",
+        provider: "claude",
+      });
+
+      await rt.runPromise(stopRun(902, "stopped"));
+    } finally {
+      await rt.dispose();
+    }
+  });
+
   test("(a) interrupt yields an AgentInterrupted-classified error, not an exit code", async () => {
     const rt = makeRuntime(4);
     try {

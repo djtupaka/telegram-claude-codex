@@ -49,8 +49,17 @@ export interface RunOptions {
   model?: string;
   projectDir: string;
   prompt: string;
+  /** Correlation id shared by lifecycle telemetry and the active-run registry. */
+  runId: string;
   sessionId?: string;
   userId: number;
+}
+
+/** Sanitized metadata for one currently active provider run. */
+export interface ActiveRunSnapshot {
+  provider: ProviderId;
+  runId: string;
+  startedAt: number;
 }
 
 /** A selectable option (model or reasoning effort). `id` `"default"` clears any override. */

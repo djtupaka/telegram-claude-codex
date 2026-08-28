@@ -2,7 +2,13 @@ import { Exit, Queue } from "effect";
 import { runtime } from "../runtime";
 import type { InterruptReason } from "./errors";
 import { getProvider } from "./registry";
-import { hasRun, startRun, stopAllRuns, stopRun } from "./run-registry";
+import {
+  getRunSnapshot,
+  hasRun,
+  startRun,
+  stopAllRuns,
+  stopRun,
+} from "./run-registry";
 import { setSession } from "./session-store";
 import type { AgentEvent, ProviderId, RunOptions } from "./types";
 
@@ -49,6 +55,10 @@ export const stopAgent = (
 /** Whether a user has an active run. */
 export const hasActiveProcess = (userId: number) =>
   runtime.runSync(hasRun(userId));
+
+/** Sanitized metadata for the user's active run, if any. */
+export const getActiveRunSnapshot = (userId: number) =>
+  runtime.runSync(getRunSnapshot(userId));
 
 /** Interrupt all runs and await settle (shutdown). */
 export const stopAll = () => runtime.runPromise(stopAllRuns);

@@ -1331,6 +1331,7 @@ export function createBot(
         prompt,
         projectDir: project,
         chatId: requireChat(ctx),
+        runId: meta.runId,
         sessionId,
         model: state.models[provider],
         effort: state.efforts[provider],

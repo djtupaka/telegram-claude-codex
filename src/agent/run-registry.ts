@@ -14,13 +14,20 @@ import { AppConfig } from "../config";
 import {
   type AgentError,
   AgentInterrupted,
+  AgentTimedOut,
   AtCapacity,
   classifyOutcome,
   type InterruptReason,
   ProviderCrashed,
 } from "./errors";
 import { spawnAndStream, streamProvider } from "./runner";
-import type { AgentEvent, EventQueue, ProviderSpec, RunOptions } from "./types";
+import type {
+  ActiveRunSnapshot,
+  AgentEvent,
+  EventQueue,
+  ProviderSpec,
+  RunOptions,
+} from "./types";
 
 /** Upper bound on shutdown drain (parallel per-fiber kill grace is ~3s). */
 const SHUTDOWN_GRACE = Duration.seconds(6);
@@ -32,6 +39,15 @@ const make = Effect.gen(function* () {
   const sem = yield* Semaphore.make(cfg.maxConcurrentRuns);
   const fibers = yield* FiberMap.make<number, void, AgentError>();
   const reasons = new Map<number, InterruptReason>();
+  const activeRuns = new Map<number, ActiveRunSnapshot>();
+
+  /** Never let an older, interrupted fiber erase its replacement's metadata. */
+  const clearActiveRun = (userId: number, runId: string) =>
+    Effect.sync(() => {
+      if (activeRuns.get(userId)?.runId === runId) {
+        activeRuns.delete(userId);
+      }
+    });
 
   /**
    * Runs once the producer fiber exits (success / typed failure / interrupt).
@@ -73,10 +89,20 @@ const make = Effect.gen(function* () {
     opts: RunOptions,
     queue: EventQueue
   ) => {
-    const producer =
+    const provider =
       spec.kind === "sdk"
         ? streamProvider(spec, opts, queue)
         : spawnAndStream(spec, opts, queue);
+    const producer = Option.match(cfg.runTimeoutMs, {
+      onNone: () => provider,
+      onSome: (timeoutMs) =>
+        provider.pipe(
+          Effect.timeoutOrElse({
+            duration: Duration.millis(timeoutMs),
+            orElse: () => Effect.fail(new AgentTimedOut({})),
+          })
+        ),
+    });
     return Semaphore.withPermitsIfAvailable(
       sem,
       1
@@ -84,7 +110,11 @@ const make = Effect.gen(function* () {
       Effect.flatMap((ran) =>
         Option.isSome(ran) ? Effect.void : new AtCapacity({})
       ),
-      Effect.onExit((exit) => emitTerminal(queue, exit, opts.userId)),
+      Effect.onExit((exit) =>
+        emitTerminal(queue, exit, opts.userId).pipe(
+          Effect.ensuring(clearActiveRun(opts.userId, opts.runId))
+        )
+      ),
       Effect.annotateLogs({ userId: opts.userId, provider: spec.id })
     );
   };
@@ -101,6 +131,13 @@ const make = Effect.gen(function* () {
         QUEUE_CAPACITY
       );
       yield* Effect.sync(() => reasons.set(opts.userId, "new_prompt"));
+      yield* Effect.sync(() =>
+        activeRuns.set(opts.userId, {
+          provider: spec.id,
+          runId: opts.runId,
+          startedAt: Date.now(),
+        })
+      );
       yield* FiberMap.run(
         fibers,
         opts.userId
@@ -126,13 +163,16 @@ const make = Effect.gen(function* () {
 
   const has = (userId: number) => FiberMap.has(fibers, userId);
 
+  const snapshot = (userId: number) =>
+    Effect.sync(() => activeRuns.get(userId));
+
   /** Shutdown: interrupt every run and await settle, bounded. */
   const stopAll = FiberMap.clear(fibers).pipe(
     Effect.timeout(SHUTDOWN_GRACE),
     Effect.ignore
   );
 
-  return { start, stop, has, stopAll } as const;
+  return { start, stop, has, snapshot, stopAll } as const;
 });
 
 /**
@@ -155,4 +195,6 @@ export const stopRun = (userId: number, reason: InterruptReason) =>
   Effect.flatMap(RunRegistry, (r) => r.stop(userId, reason));
 export const hasRun = (userId: number) =>
   Effect.flatMap(RunRegistry, (r) => r.has(userId));
+export const getRunSnapshot = (userId: number) =>
+  Effect.flatMap(RunRegistry, (r) => r.snapshot(userId));
 export const stopAllRuns = Effect.flatMap(RunRegistry, (r) => r.stopAll);
