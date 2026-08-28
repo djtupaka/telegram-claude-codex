@@ -22,6 +22,7 @@
     "service:stop": "bun run scripts/service.ts stop",
     "service:restart": "bun run scripts/service.ts restart",
     "service:uninstall": "bun run scripts/service.ts uninstall",
+    "session:rotate-codex": "bun run scripts/rotate-codex-session.ts",
     "prepare": "husky"
   },
   "dependencies": {
