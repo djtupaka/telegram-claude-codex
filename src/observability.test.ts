@@ -23,7 +23,11 @@ import {
   clipError,
   Observability,
   RUN_EVENT_MARKER,
+  RUN_STARTED_MARKER,
   RunEvent,
+  RunStartedEvent,
+  UPDATE_RECEIVED_MARKER,
+  UpdateReceivedEvent,
 } from "./observability";
 
 let dir: string;
@@ -89,6 +93,14 @@ const baseEvent = (over: Partial<ConstructorParameters<typeof RunEvent>[0]>) =>
 
 const record = async (rt: ReturnType<typeof makeRuntime>, event: RunEvent) =>
   await rt.runPromise(Effect.flatMap(Observability, (o) => o.recordRun(event)));
+
+const recordLifecycle = async (
+  rt: ReturnType<typeof makeRuntime>,
+  event: RunStartedEvent | UpdateReceivedEvent
+) =>
+  await rt.runPromise(
+    Effect.flatMap(Observability, (o) => o.recordLifecycle(event))
+  );
 
 const readLines = (path: string) =>
   readFileSync(path, "utf-8")
@@ -181,6 +193,73 @@ describe("Observability.recordRun", () => {
       // the guard held: logPath is untouched and no directory was created under it
       expect(statSync(logPath).isFile()).toBe(true);
       expect(existsSync(join(logPath, "nope"))).toBe(false);
+    } finally {
+      await rt.dispose();
+    }
+  });
+});
+
+describe("Observability.recordLifecycle", () => {
+  test("records a sanitized Telegram update without message content", async () => {
+    const rt = makeRuntime(logPath);
+    try {
+      await recordLifecycle(
+        rt,
+        new UpdateReceivedEvent({
+          ts: "2026-08-28T00:00:00.000Z",
+          event: UPDATE_RECEIVED_MARKER,
+          updateId: 42,
+          userId: 1,
+          kind: "text",
+          version: "0.0.0",
+          host: "test-host",
+        })
+      );
+      const [row] = readLines(logPath);
+      expect(row).toMatchObject({
+        event: UPDATE_RECEIVED_MARKER,
+        updateId: 42,
+        userId: 1,
+        kind: "text",
+      });
+      expect(row.prompt).toBeUndefined();
+      expect(row.text).toBeUndefined();
+    } finally {
+      await rt.dispose();
+    }
+  });
+
+  test("records run start with basename-only project and nullable overrides", async () => {
+    const rt = makeRuntime(logPath);
+    try {
+      await recordLifecycle(
+        rt,
+        new RunStartedEvent({
+          ts: "2026-08-28T00:00:00.000Z",
+          event: RUN_STARTED_MARKER,
+          runId: "r-start",
+          userId: 1,
+          provider: "codex",
+          project: "premelone",
+          model: null,
+          effort: "medium",
+          queueDepth: 2,
+          version: "0.0.0",
+          host: "test-host",
+        })
+      );
+      const [row] = readLines(logPath);
+      expect(row).toMatchObject({
+        event: RUN_STARTED_MARKER,
+        runId: "r-start",
+        provider: "codex",
+        project: "premelone",
+        model: null,
+        effort: "medium",
+        queueDepth: 2,
+      });
+      expect(row.prompt).toBeUndefined();
+      expect(row.project).not.toContain("/");
     } finally {
       await rt.dispose();
     }

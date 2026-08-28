@@ -11,6 +11,7 @@ import { Effect } from "effect";
 import { Bot, type Context, InlineKeyboard, Keyboard } from "grammy";
 import {
   clearSessionCache,
+  getActiveRunSnapshot,
   getCapabilities,
   getDefaultEffort,
   getEffortLevels,
@@ -40,7 +41,11 @@ import {
   clipError,
   Observability,
   RUN_EVENT_MARKER,
+  RUN_STARTED_MARKER,
   RunEvent,
+  RunStartedEvent,
+  UPDATE_RECEIVED_MARKER,
+  UpdateReceivedEvent,
 } from "./observability";
 import { runtime } from "./runtime";
 import {
@@ -81,6 +86,49 @@ const readVersion = () => {
 
 /** App version stamped onto every wide event. */
 const VERSION = readVersion();
+
+type UpdateKind = ConstructorParameters<typeof UpdateReceivedEvent>[0]["kind"];
+
+/** Classify an authorized update without retaining any user-supplied content. */
+const updateKind = (ctx: Context): UpdateKind => {
+  const message = ctx.message;
+  if (message?.text?.startsWith("/")) {
+    return "command";
+  }
+  if (message?.text) {
+    return "text";
+  }
+  if (message?.voice) {
+    return "voice";
+  }
+  if (message?.photo) {
+    return "photo";
+  }
+  if (message?.document) {
+    return "document";
+  }
+  return "other";
+};
+
+/** Best-effort bridge for prompt-free lifecycle markers. */
+const emitLifecycleEvent = async (
+  event: RunStartedEvent | UpdateReceivedEvent
+) => {
+  try {
+    await runtime.runPromise(
+      Effect.flatMap(Observability, (o) => o.recordLifecycle(event))
+    );
+  } catch {
+    // Observability must never delay or break Telegram handling.
+  }
+};
+
+const formatElapsed = (startedAt: number) => {
+  const totalSeconds = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
+};
 
 /** Mutable outcome/economics accumulator for a single prompt run. */
 interface RunRecord {
@@ -434,6 +482,24 @@ export function createBot(
     await next();
   });
 
+  // Authorized-update receipt marker: ids and kind only, never message content.
+  bot.use(async (ctx, next) => {
+    if (ctx.from) {
+      await emitLifecycleEvent(
+        new UpdateReceivedEvent({
+          ts: new Date().toISOString(),
+          event: UPDATE_RECEIVED_MARKER,
+          updateId: ctx.update.update_id,
+          userId: ctx.from.id,
+          kind: updateKind(ctx),
+          version: VERSION,
+          host: hostname(),
+        })
+      );
+    }
+    await next();
+  });
+
   const buttonToCommand: Record<string, string> = {
     Projects: "/projects",
     History: "/history",
@@ -705,9 +771,16 @@ export function createBot(
   });
 
   bot.command("status", async (ctx) => {
-    const state = getState(getUserId(ctx));
+    const userId = getUserId(ctx);
+    const state = getState(userId);
     const project = describeProject(state.activeProject, projectsDir);
-    const running = hasActiveProcess(getUserId(ctx)) ? "Yes" : "No";
+    const activeRun = getActiveRunSnapshot(userId);
+    let running = "No";
+    if (hasActiveProcess(userId)) {
+      running = activeRun
+        ? `Yes (${activeRun.provider}, ${formatElapsed(activeRun.startedAt)})`
+        : "Yes";
+    }
     const sessionCount = await runtime.runPromise(
       countSessions(state.activeProvider)
     );
@@ -1326,6 +1399,21 @@ export function createBot(
     let presentedPlan = false;
 
     try {
+      await emitLifecycleEvent(
+        new RunStartedEvent({
+          ts: new Date().toISOString(),
+          event: RUN_STARTED_MARKER,
+          runId: meta.runId,
+          userId,
+          provider,
+          project: projectName,
+          model: state.models[provider] ?? null,
+          effort: state.efforts[provider] ?? null,
+          queueDepth: state.queue.length,
+          version: VERSION,
+          host: hostname(),
+        })
+      );
       const events = runAgent(provider, {
         userId,
         prompt,

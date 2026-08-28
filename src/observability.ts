@@ -5,6 +5,8 @@ import { AppConfig } from "./config";
 
 /** Marker tag stamped on every wide run event; the sole filter key for `bun run logs`. */
 export const RUN_EVENT_MARKER = "telegram.run";
+export const UPDATE_RECEIVED_MARKER = "telegram.update_received";
+export const RUN_STARTED_MARKER = "telegram.run_started";
 
 /**
  * Outcome taxonomy for a single prompt run. Superset of the phase-2
@@ -49,7 +51,47 @@ export class RunEvent extends Schema.Class<RunEvent>("RunEvent")({
   host: Schema.String,
 }) {}
 
+/** Prompt-free receipt marker used to distinguish Telegram silence from agent hangs. */
+export class UpdateReceivedEvent extends Schema.Class<UpdateReceivedEvent>(
+  "UpdateReceivedEvent"
+)({
+  ts: Schema.String,
+  event: Schema.tag(UPDATE_RECEIVED_MARKER),
+  updateId: Schema.Number,
+  userId: Schema.Number,
+  kind: Schema.Literals([
+    "command",
+    "text",
+    "voice",
+    "photo",
+    "document",
+    "other",
+  ]),
+  version: Schema.String,
+  host: Schema.String,
+}) {}
+
+/** Sanitized marker emitted immediately before a provider run is started. */
+export class RunStartedEvent extends Schema.Class<RunStartedEvent>(
+  "RunStartedEvent"
+)({
+  ts: Schema.String,
+  event: Schema.tag(RUN_STARTED_MARKER),
+  runId: Schema.String,
+  userId: Schema.Number,
+  provider: Schema.String,
+  project: Schema.String,
+  model: Schema.NullOr(Schema.String),
+  effort: Schema.NullOr(Schema.String),
+  queueDepth: Schema.Number,
+  version: Schema.String,
+  host: Schema.String,
+}) {}
+
+const LifecycleEvent = Schema.Union([UpdateReceivedEvent, RunStartedEvent]);
+
 const encodeRunEvent = Schema.encodeEffect(RunEvent);
+const encodeLifecycleEvent = Schema.encodeEffect(LifecycleEvent);
 
 /** Secret shapes stripped from any error copy before it reaches the log. */
 const SECRET_PATTERNS: readonly RegExp[] = [
@@ -78,22 +120,29 @@ const make = Effect.gen(function* () {
   const fs = yield* FileSystem;
   const logDir = dirname(config.eventLogPath);
 
-  const recordRun = (event: RunEvent) =>
+  const append = (encoded: Record<string, unknown>, message: string) =>
     Effect.gen(function* () {
-      const encoded = yield* encodeRunEvent(event);
       const line = `${JSON.stringify(encoded)}\n`;
       yield* fs.makeDirectory(logDir, { recursive: true }).pipe(Effect.ignore);
       yield* fs.writeFile(config.eventLogPath, new TextEncoder().encode(line), {
         flag: "a",
       });
-      yield* Effect.logInfo("run complete").pipe(
-        Effect.annotateLogs({ ...encoded, event: RUN_EVENT_MARKER })
-      );
-      // catchAllCause (not Effect.ignore) so a defect/interrupt is swallowed
-      // too — recordRun is self-safe and can never abort or mask a chat.
+      yield* Effect.logInfo(message).pipe(Effect.annotateLogs(encoded));
     }).pipe(Effect.catchCause(() => Effect.void));
 
-  return { recordRun } as const;
+  const recordRun = (event: RunEvent) =>
+    Effect.gen(function* () {
+      const encoded = yield* encodeRunEvent(event);
+      yield* append(encoded, "run complete");
+    }).pipe(Effect.catchCause(() => Effect.void));
+
+  const recordLifecycle = (event: RunStartedEvent | UpdateReceivedEvent) =>
+    Effect.gen(function* () {
+      const encoded = yield* encodeLifecycleEvent(event);
+      yield* append(encoded, "telegram lifecycle");
+    }).pipe(Effect.catchCause(() => Effect.void));
+
+  return { recordLifecycle, recordRun } as const;
 });
 
 /**
