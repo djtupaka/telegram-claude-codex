@@ -69,6 +69,24 @@ const makeSpec = (script: string): ProviderSpec => ({
     },
 });
 
+const makeHangingSdkSpec = (onAbort?: () => void): ProviderSpec => ({
+  id: "codex",
+  kind: "sdk",
+  async *run(_opts, signal) {
+    await new Promise<void>((resolve) => {
+      const aborted = () => {
+        onAbort?.();
+        resolve();
+      };
+      if (signal.aborted) {
+        aborted();
+      } else {
+        signal.addEventListener("abort", aborted, { once: true });
+      }
+    });
+  },
+});
+
 const makeOpts = (userId: number): RunOptions => ({
   chatId: userId,
   projectDir: process.cwd(),
@@ -163,6 +181,53 @@ describe("RunRegistry.stop on unknown user", () => {
 });
 
 describe("RunRegistry — subprocess lifecycle (fake sh provider)", () => {
+  test("configured timeout aborts a hung SDK provider", async () => {
+    const rt = makeRuntime(4, Option.some(80));
+    let aborted = false;
+    try {
+      const queue = await rt.runPromise(
+        startRun(
+          makeHangingSdkSpec(() => {
+            aborted = true;
+          }),
+          makeOpts(900)
+        )
+      );
+      const terminal = await takeEvent(rt, queue);
+      expect(terminal.kind).toBe("error");
+      if (terminal.kind === "error") {
+        expect(terminal.class?._tag).toBe("AgentTimedOut");
+      }
+      expect(aborted).toBe(true);
+    } finally {
+      await rt.dispose();
+    }
+  });
+
+  test("disabled timeout leaves a hung SDK active until explicit stop", async () => {
+    const rt = makeRuntime(4, Option.none());
+    try {
+      const queue = await rt.runPromise(
+        startRun(makeHangingSdkSpec(), makeOpts(899))
+      );
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(await rt.runPromise(hasRun(899))).toBe(true);
+      expect(await rt.runPromise(getRunSnapshot(899))).toMatchObject({
+        runId: "run-899",
+        provider: "codex",
+      });
+
+      await rt.runPromise(stopRun(899, "stopped"));
+      const terminal = await takeEvent(rt, queue);
+      expect(terminal.kind).toBe("error");
+      if (terminal.kind === "error") {
+        expect(terminal.class?._tag).toBe("AgentInterrupted");
+      }
+    } finally {
+      await rt.dispose();
+    }
+  });
+
   test("enforces RUN_TIMEOUT_MS and clears both fiber and active metadata", async () => {
     const rt = makeRuntime(4, Option.some(80));
     try {
@@ -247,6 +312,11 @@ describe("RunRegistry — subprocess lifecycle (fake sh provider)", () => {
         expect(terminal.class?._tag).toBe("AgentInterrupted");
         expect(terminal.message).toBe("Stopped.");
       }
+      expect(
+        await waitUntil(
+          async () => (await rt.runPromise(getRunSnapshot(1001))) === undefined
+        )
+      ).toBe(true);
     } finally {
       await rt.dispose();
     }
@@ -267,6 +337,11 @@ describe("RunRegistry — subprocess lifecycle (fake sh provider)", () => {
           expect(terminal.class.stderr).toContain("boom");
         }
       }
+      expect(
+        await waitUntil(
+          async () => (await rt.runPromise(getRunSnapshot(1002))) === undefined
+        )
+      ).toBe(true);
     } finally {
       await rt.dispose();
     }
@@ -285,6 +360,7 @@ describe("RunRegistry — subprocess lifecycle (fake sh provider)", () => {
         async () => !(await rt.runPromise(hasRun(1003)))
       );
       expect(cleared).toBe(true);
+      expect(await rt.runPromise(getRunSnapshot(1003))).toBeUndefined();
     } finally {
       await rt.dispose();
     }
