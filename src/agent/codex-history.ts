@@ -1,11 +1,25 @@
-import { readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
+import {
+  closeSync,
+  openSync,
+  readdirSync,
+  readSync,
+  realpathSync,
+  statSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import type { SessionInfo } from "./types";
 
-const CODEX_SESSIONS_DIR = join(homedir(), ".codex", "sessions");
 const MAX_SESSIONS = 50;
 const MAX_HEAD_LINES = 40;
+const MAX_HEAD_BYTES = 1024 * 1024;
+const MAX_CONTEXT_BYTES = 104_857_600;
+
+export const CODEX_CONTEXT_WARNING =
+  "Session warning: Codex context file exceeds 100 MiB; consider /new after the current work phase.";
+
+const codexSessionsDir = () =>
+  join(process.env.CODEX_HOME ?? join(homedir(), ".codex"), "sessions");
 
 /**
  * Resolve a path to its macOS-canonical form so Codex-recorded cwds
@@ -40,13 +54,17 @@ const cleanSummary = (raw: string) =>
     .slice(0, 100);
 
 /**
- * Read the leading JSONL lines of a rollout file. Codex `session_meta` lines
- * are large (~20KB of base_instructions), so a byte-bounded head is unreliable;
- * read by line and cap the count instead.
+ * Read a bounded leading window of a rollout file and cap parsed lines. The
+ * 1 MiB window comfortably includes Codex's large session metadata while
+ * avoiding whole-file reads for long-running sessions.
  */
 const readHeadLines = (filePath: string): string[] => {
+  let fd: number | undefined;
   try {
-    const text = readFileSync(filePath, "utf8");
+    fd = openSync(filePath, "r");
+    const buffer = Buffer.allocUnsafe(MAX_HEAD_BYTES);
+    const bytesRead = readSync(fd, buffer, 0, buffer.length, 0);
+    const text = buffer.toString("utf8", 0, bytesRead);
     const lines: string[] = [];
     let from = 0;
     while (lines.length < MAX_HEAD_LINES) {
@@ -63,6 +81,10 @@ const readHeadLines = (filePath: string): string[] => {
     return lines.filter(Boolean);
   } catch {
     return [];
+  } finally {
+    if (fd !== undefined) {
+      closeSync(fd);
+    }
   }
 };
 
@@ -120,7 +142,7 @@ const parseRolloutHead = (
 };
 
 /** Recursively collect rollout-*.jsonl files with their mtime, newest first */
-const collectRolloutFiles = (limit: number) => {
+const collectRolloutFiles = (limit?: number) => {
   const found: Array<{ path: string; mtime: number }> = [];
 
   const walk = (dir: string) => {
@@ -146,8 +168,58 @@ const collectRolloutFiles = (limit: number) => {
     }
   };
 
-  walk(CODEX_SESSIONS_DIR);
-  return found.sort((a, b) => b.mtime - a.mtime).slice(0, limit * 2);
+  walk(codexSessionsDir());
+  const sorted = found.sort((a, b) => b.mtime - a.mtime);
+  return limit === undefined ? sorted : sorted.slice(0, limit * 2);
+};
+
+const rolloutSessionId = (filePath: string): string | undefined => {
+  for (const line of readHeadLines(filePath)) {
+    try {
+      const entry = JSON.parse(line) as {
+        payload?: { id?: unknown };
+        type?: unknown;
+      };
+      if (entry.type === "session_meta") {
+        return typeof entry.payload?.id === "string"
+          ? entry.payload.id
+          : undefined;
+      }
+    } catch {
+      // Ignore malformed head lines and continue to the session metadata.
+    }
+  }
+  return undefined;
+};
+
+/** Resolve exact rollout metadata for a persisted active Codex session. */
+export const getCodexSessionFileInfo = (
+  sessionId: string
+): { path: string; sizeBytes: number } | undefined => {
+  if (!sessionId) {
+    return undefined;
+  }
+  for (const file of collectRolloutFiles()) {
+    if (rolloutSessionId(file.path) !== sessionId) {
+      continue;
+    }
+    try {
+      return { path: file.path, sizeBytes: statSync(file.path).size };
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+};
+
+/** Read-only warning lookup for the exact persisted Codex session id. */
+export const getCodexContextWarning = (
+  sessionId: string
+): string | undefined => {
+  const info = getCodexSessionFileInfo(sessionId);
+  return info && info.sizeBytes > MAX_CONTEXT_BYTES
+    ? CODEX_CONTEXT_WARNING
+    : undefined;
 };
 
 /** List recent Codex sessions across all projects, newest first */

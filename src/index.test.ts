@@ -14,3 +14,9 @@ test("startup notification uses the shared provider fallback", () => {
     'const providerId = persisted?.activeProvider ?? "claude";'
   );
 });
+
+test("startup emits one bounded sanitized runtime version summary", () => {
+  expect(source).toContain("collectRuntimeVersions()");
+  expect(source).toContain("Runtime versions:");
+  expect(source).toContain("JSON.stringify(versions)");
+});

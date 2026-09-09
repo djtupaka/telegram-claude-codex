@@ -24,6 +24,7 @@ import {
   stopAgent,
 } from "./agent";
 import { runWithAstraStartupFallback } from "./agent/astra-fallback";
+import { getCodexContextWarning } from "./agent/codex-history";
 import { classifyOutcome, runOutcomeOf } from "./agent/errors";
 import { resolveEffortChoice, resolveModelChoice } from "./agent/preferences";
 import { getProvider, listProviders } from "./agent/registry";
@@ -68,6 +69,7 @@ import {
   streamToTelegram,
 } from "./telegram";
 import { TranscribeService } from "./transcribe";
+import { BOT_VERSION } from "./version-info";
 
 /**
  * Promise-facing bridge to the Effect TranscribeService: resolves the spoken
@@ -78,20 +80,6 @@ const transcribeAudio = (buffer: Buffer, filename: string) =>
   runtime.runPromise(
     Effect.flatMap(TranscribeService, (t) => t.transcribe(buffer, filename))
   );
-
-/** Read package.json once at load to stamp a version onto every wide event. */
-const readVersion = () => {
-  try {
-    const path = join(import.meta.dir, "..", "package.json");
-    const raw = readFileSync(path, "utf8");
-    return (JSON.parse(raw) as { version?: string }).version ?? "0.0.0";
-  } catch {
-    return "0.0.0";
-  }
-};
-
-/** App version stamped onto every wide event. */
-const VERSION = readVersion();
 
 type UpdateKind = ConstructorParameters<typeof UpdateReceivedEvent>[0]["kind"];
 
@@ -220,7 +208,7 @@ const emitRunEvent = async (rec: RunRecord, meta: RunEventMeta) => {
       queueDepth: meta.queueDepth,
       errorClass: rec.errorClass,
       errorMessage: rec.errorMessage,
-      version: VERSION,
+      version: BOT_VERSION,
       host: hostname(),
     });
     await runtime.runPromise(
@@ -258,6 +246,22 @@ interface UserState {
   queue: QueuedMessage[];
   queueStatusMessageId?: number;
 }
+
+/** Return a read-only context warning only for the selected Codex session. */
+const statusSessionWarning = async (state: UserState) => {
+  if (state.activeProvider !== "codex") {
+    return "";
+  }
+  try {
+    const sessionId = await runtime.runPromise(
+      getSession(state.activeProject, state.activeProvider)
+    );
+    const warning = sessionId ? getCodexContextWarning(sessionId) : undefined;
+    return warning ? `\n${warning}` : "";
+  } catch {
+    return "";
+  }
+};
 
 const userStates = new Map<number, UserState>();
 const HISTORY_PAGE_SIZE = 5;
@@ -497,7 +501,7 @@ export function createBot(
           updateId: ctx.update.update_id,
           userId: ctx.from.id,
           kind: updateKind(ctx),
-          version: VERSION,
+          version: BOT_VERSION,
           host: hostname(),
         })
       );
@@ -805,9 +809,10 @@ export function createBot(
     const effortLabel =
       getEffortLevels(provider).find((e) => e.id === effortId)?.label ??
       effortId;
+    const sessionWarning = await statusSessionWarning(state);
 
     await ctx.reply(
-      `Provider: ${activeProviderName(state)}\nModel: ${modelLabel} · Effort: ${effortLabel}\nProject: ${project}\nRunning: ${running}\nSessions: ${sessionCount}${branchLine}${queueLine}${composeLine}`,
+      `Provider: ${activeProviderName(state)}\nModel: ${modelLabel} · Effort: ${effortLabel}\nProject: ${project}\nRunning: ${running}\nSessions: ${sessionCount}${branchLine}${queueLine}${composeLine}${sessionWarning}`,
       { reply_markup: mainKeyboard }
     );
   });
@@ -1423,7 +1428,7 @@ export function createBot(
               model: attempt.model,
               effort,
               queueDepth: state.queue.length,
-              version: VERSION,
+              version: BOT_VERSION,
               host: hostname(),
             })
           );

@@ -7,6 +7,7 @@ import { AppConfig } from "./config";
 import { runtime } from "./runtime";
 import { DEFAULT_PROVIDER, loadPersistedState } from "./state";
 import { BotService } from "./telegram/bot-service";
+import { collectRuntimeVersions } from "./version-info";
 
 /** Warn (but never block startup) if the Codex CLI is missing or not logged in */
 const checkCodexAvailable = async () => {
@@ -64,6 +65,11 @@ process.on("SIGINT", shutdown);
 bot.start({
   onStart: () => {
     console.log("Bot started");
+    collectRuntimeVersions()
+      .then((versions) =>
+        console.log(`Runtime versions: ${JSON.stringify(versions)}`)
+      )
+      .catch(() => undefined);
     // Auth mode is silently flipped by ANTHROPIC_API_KEY presence: absent =>
     // on-disk subscription login (~/.claude); present => metered API pricing.
     console.log(
