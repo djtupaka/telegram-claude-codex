@@ -163,7 +163,7 @@ git commit -m "feat: make Astra the controlled Codex default"
 
 **Interfaces:**
 - Consumes: `resolveModelChoice()` and `resolveEffortChoice()` from Task 1.
-- Produces: `shouldFallbackToSol(input): boolean`, where `input` contains `provider`, `model`, `errorMessage`, `observableWorkStarted`, and `fallbackAttempted`.
+- Produces: `shouldFallbackToSol(input): boolean`, where `input` contains `provider`, `model`, `errorMessage`, `observableWorkStarted`, `resumedSession`, and `fallbackAttempted`.
 - Produces: `StreamResult.errorMessage?: string` and `StreamResult.observableWorkStarted?: boolean`.
 
 - [ ] **Step 1: Write the fallback decision tests**
@@ -175,13 +175,15 @@ test("allows one Sol fallback for an Astra capacity failure before work", () => 
     model: "gpt-6-astra",
     errorMessage: "Selected model is at capacity. Please try a different model.",
     observableWorkStarted: false,
+    resumedSession: false,
     fallbackAttempted: false,
   })).toBe(true);
 });
 
 test.each([
-  { observableWorkStarted: true, fallbackAttempted: false },
-  { observableWorkStarted: false, fallbackAttempted: true },
+  { observableWorkStarted: true, resumedSession: false, fallbackAttempted: false },
+  { observableWorkStarted: false, resumedSession: true, fallbackAttempted: false },
+  { observableWorkStarted: false, resumedSession: false, fallbackAttempted: true },
 ])("never replays partial work or retries twice", (flags) => {
   expect(shouldFallbackToSol({
     provider: "codex",
@@ -209,6 +211,7 @@ export const shouldFallbackToSol = (input: FallbackInput) =>
   input.provider === "codex" &&
   input.model === "gpt-6-astra" &&
   !input.observableWorkStarted &&
+  !input.resumedSession &&
   !input.fallbackAttempted &&
   START_FAILURE.test(input.errorMessage ?? "");
 ```
@@ -217,7 +220,7 @@ In `streamToTelegram`, set `observableWorkStarted` only for text, tool, agent, p
 
 - [ ] **Step 4: Refactor `runSinglePrompt` into bounded attempts**
 
-Resolve the effective model and effort once. Execute Astra once. If and only if `shouldFallbackToSol` returns true, clear the failed session, send one explicit Telegram notice, and execute the original prompt once with `model: "gpt-5.6-sol"` and a new run id. Do not change the persisted Astra default. Return after Sol completes or fails.
+Resolve the effective model and effort once. Execute Astra once. If and only if `shouldFallbackToSol` returns true for a brand-new session, clear only the newly created failed session, send one explicit Telegram notice, and execute the original prompt once with `model: "gpt-5.6-sol"` and a new run id. Never auto-fallback a resumed session. Do not change the persisted Astra default. Return after Sol completes or fails.
 
 ```ts
 for (const attempt of attempts) {
@@ -542,7 +545,7 @@ Verify `codex --version`, `happy --version`, and `claude --version`. Do not rest
 
 - [ ] **Step 6: Prepare cutover without interrupting active work**
 
-Confirm the bot has no active run through `/status` or the service event log. Ensure `.env` contains `CODEX_MODEL=gpt-6-astra`, `CODEX_REASONING_EFFORT=medium`, leaves `RUN_TIMEOUT_MS` unset, and sets `RUN_INACTIVITY_WARNING_MS=1200000`. Stop if an active run exists.
+Confirm the bot has no active run through `/status` or the service event log. Ensure `.env` leaves `RUN_TIMEOUT_MS` unset and sets `RUN_INACTIVITY_WARNING_MS=1200000`. Remove the inert legacy `CODEX_MODEL` and `CODEX_REASONING_EFFORT` lines only after confirming the current code never reads them; the effective model comes from the provider default and persisted bot state. Stop if an active run exists.
 
 - [ ] **Step 7: Perform one controlled service restart**
 
