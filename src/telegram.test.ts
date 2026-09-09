@@ -141,4 +141,42 @@ describe("streamToTelegram", () => {
     expect(result.totalTokens).toBe(900);
     expect(result.sessionId).toBe("s-9");
   });
+
+  test("retains the exact provider error separately from rendered copy", async () => {
+    const exact =
+      "Selected model is at capacity. Please try a different model.";
+    const { result } = await run([{ kind: "error", message: exact }]);
+    expect(result.errorMessage).toBe(exact);
+    expect(result.observableWorkStarted).toBe(false);
+  });
+
+  test.each([
+    { kind: "text_delta", text: "visible" } satisfies AgentEvent,
+    { kind: "tool_use", name: "Read", input: "README.md" } satisfies AgentEvent,
+    {
+      kind: "agent_started",
+      taskId: "a-1",
+      description: "inspect",
+    } satisfies AgentEvent,
+    { kind: "plan_ready", planPath: "/tmp/PLAN.md" } satisfies AgentEvent,
+    {
+      kind: "result",
+      text: "final output",
+      sessionId: "s-1",
+      durationMs: 1,
+    } satisfies AgentEvent,
+  ])("marks externally observable work for %p", async (event) => {
+    const { result } = await run([event]);
+    expect(result.observableWorkStarted).toBe(true);
+  });
+
+  test("reasoning and session initialization alone are not observable work", async () => {
+    const { result } = await run([
+      { kind: "session_init", sessionId: "s-1" },
+      { kind: "thinking_start" },
+      { kind: "thinking_delta", text: "private reasoning" },
+      { kind: "thinking_done", durationMs: 1 },
+    ]);
+    expect(result.observableWorkStarted).toBe(false);
+  });
 });

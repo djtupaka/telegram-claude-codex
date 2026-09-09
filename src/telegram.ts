@@ -110,7 +110,9 @@ export interface StreamResult {
   cost?: number;
   durationMs?: number;
   errorClass?: AgentError;
+  errorMessage?: string;
   messageId?: number;
+  observableWorkStarted?: boolean;
   planPath?: string;
   sessionId?: string;
   totalTokens?: number;
@@ -259,6 +261,9 @@ const switchMode = async (s: StreamCtx, newMode: MessageMode) => {
 
 /** Append a model text delta, switching into text mode when needed */
 const handleTextDelta = async (s: StreamCtx, event: EventOf<"text_delta">) => {
+  if (event.text) {
+    s.result.observableWorkStarted = true;
+  }
   if (s.mode !== "text") {
     await switchMode(s, "text");
     startDraft(s);
@@ -269,6 +274,7 @@ const handleTextDelta = async (s: StreamCtx, event: EventOf<"text_delta">) => {
 
 /** Append a tool-use line, switching into tools mode when needed */
 const handleToolUse = async (s: StreamCtx, event: EventOf<"tool_use">) => {
+  s.result.observableWorkStarted = true;
   if (s.mode !== "tools") {
     await switchMode(s, "tools");
     startDraft(s);
@@ -326,6 +332,7 @@ const handleAgentStarted = async (
   if (!s.capabilities.subagents) {
     return;
   }
+  s.result.observableWorkStarted = true;
   if (s.mode !== "tools") {
     await switchMode(s, "tools");
     startDraft(s);
@@ -354,6 +361,7 @@ const handleAgentDone = async (s: StreamCtx, event: EventOf<"agent_done">) => {
   if (!s.capabilities.subagents) {
     return;
   }
+  s.result.observableWorkStarted = true;
   const icon = event.status === "completed" ? "✅" : "❌";
   const parts = agentDoneParts(event);
   const suffix = parts.length > 0 ? ` (${parts.join(", ")})` : "";
@@ -373,6 +381,9 @@ const handleResult = async (s: StreamCtx, event: EventOf<"result">) => {
   s.result.durationMs = event.durationMs;
   s.result.turns = event.turns;
   s.result.totalTokens = event.totalTokens;
+  if (event.text) {
+    s.result.observableWorkStarted = true;
+  }
   if (!s.accumulated && event.text) {
     if (s.mode !== "text") {
       await switchMode(s, "text");
@@ -389,6 +400,7 @@ const handleError = async (s: StreamCtx, event: EventOf<"error">) => {
   if (event.class) {
     s.result.errorClass = event.class;
   }
+  s.result.errorMessage = event.message;
   const copy = event.class ? classifyOutcome(event.class).copy : event.message;
   s.accumulated += s.accumulated ? `\n\n_${copy}_` : copy;
 };
@@ -422,6 +434,7 @@ const dispatchEvent = async (s: StreamCtx, event: AgentEvent) => {
       break;
     case "plan_ready":
       s.result.planPath = event.planPath;
+      s.result.observableWorkStarted = true;
       return true;
     case "result":
       await handleResult(s, event);
@@ -486,7 +499,7 @@ export async function streamToTelegram(
     ctx,
     chatId,
     capabilities,
-    result: {},
+    result: { observableWorkStarted: false },
     mode: "none",
     accumulated: "",
     lastEditTime: 0,

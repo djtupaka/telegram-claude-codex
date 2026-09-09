@@ -22,8 +22,10 @@ import {
   runAgent,
   stopAgent,
 } from "./agent";
+import { runWithAstraStartupFallback } from "./agent/astra-fallback";
 import { classifyOutcome, runOutcomeOf } from "./agent/errors";
-import { listProviders } from "./agent/registry";
+import { resolveEffortChoice, resolveModelChoice } from "./agent/preferences";
+import { getProvider, listProviders } from "./agent/registry";
 import {
   clearSession,
   countSessions,
@@ -171,6 +173,11 @@ const applyResultEconomics = (result: StreamResult, rec: RunRecord) => {
   rec.totalTokens = result.totalTokens ?? null;
   rec.durationMs = result.durationMs ?? null;
   if (!result.errorClass) {
+    if (result.errorMessage) {
+      rec.outcome = "errored";
+      rec.errorClass = "ProviderError";
+      rec.errorMessage = clipError(result.errorMessage);
+    }
     return;
   }
   rec.outcome = runOutcomeOf(result.errorClass);
@@ -1377,85 +1384,107 @@ export function createBot(
         ? getCurrentBranch(state.activeProject)
         : null;
 
-    // Wide-event context captured up front so every return path emits once.
     const provider = state.activeProvider;
     const project = state.activeProject;
-    const meta: RunEventMeta = {
-      runId: crypto.randomUUID(),
-      userId,
+    const providerSpec = getProvider(provider);
+    const model = resolveModelChoice(providerSpec, state.models[provider]);
+    const effort = resolveEffortChoice(providerSpec, state.efforts[provider]);
+    const resumedSession = Boolean(sessionId);
+
+    const outcome = await runWithAstraStartupFallback({
       provider,
-      project,
-      promptChars: prompt.length,
-      queueDepth: state.queue.length,
-    };
-
-    const rec: RunRecord = {
-      outcome: "done",
-      costUsd: null,
-      turns: null,
-      totalTokens: null,
-      durationMs: null,
-      sessionId: sessionId ?? null,
-    };
-    let presentedPlan = false;
-
-    try {
-      await emitLifecycleEvent(
-        new RunStartedEvent({
-          ts: new Date().toISOString(),
-          event: RUN_STARTED_MARKER,
-          runId: meta.runId,
+      model,
+      resumedSession,
+      runIds: [crypto.randomUUID(), crypto.randomUUID()],
+      executeAttempt: async (attempt) => {
+        const meta: RunEventMeta = {
+          runId: attempt.runId,
           userId,
           provider,
-          project: projectName,
-          model: state.models[provider] ?? null,
-          effort: state.efforts[provider] ?? null,
+          project,
+          promptChars: prompt.length,
           queueDepth: state.queue.length,
-          version: VERSION,
-          host: hostname(),
-        })
-      );
-      const events = runAgent(provider, {
-        userId,
-        prompt,
-        projectDir: project,
-        chatId: requireChat(ctx),
-        runId: meta.runId,
-        sessionId,
-        model: state.models[provider],
-        effort: state.efforts[provider],
-      });
-      const result = await streamToTelegram(
-        ctx,
-        events,
-        projectName,
-        getCapabilities(provider),
-        { branchName }
-      );
-      if (result.sessionId) {
-        // Persisted by the runner's stream tap (session_init + result); here we
-        // only carry it onto the wide event.
-        rec.sessionId = result.sessionId;
-      }
-      applyResultEconomics(result, rec);
+        };
+        const rec: RunRecord = {
+          outcome: "done",
+          costUsd: null,
+          turns: null,
+          totalTokens: null,
+          durationMs: null,
+          sessionId: attempt.fallbackAttempted ? null : (sessionId ?? null),
+        };
+        let result: StreamResult = { observableWorkStarted: false };
+        let presentedPlan = false;
 
-      if (result.planPath && getCapabilities(provider).planMode) {
-        stopAgent(userId, "stopped");
-        await presentPlan(ctx, userId, state, result);
-        presentedPlan = true;
-      }
-    } catch (e) {
-      rec.outcome = "errored";
-      rec.errorClass =
-        (e as { _tag?: string })?._tag ??
-        (e as Error)?.name ??
-        "ProviderCrashed";
-      rec.errorMessage = clipError(String((e as Error)?.message ?? e));
-      console.error("runAndDrain error:", e);
-    } finally {
-      await emitRunEvent(rec, meta);
-    }
-    return presentedPlan;
+        try {
+          await emitLifecycleEvent(
+            new RunStartedEvent({
+              ts: new Date().toISOString(),
+              event: RUN_STARTED_MARKER,
+              runId: meta.runId,
+              userId,
+              provider,
+              project: projectName,
+              model: attempt.model,
+              effort,
+              queueDepth: state.queue.length,
+              version: VERSION,
+              host: hostname(),
+            })
+          );
+          const events = runAgent(provider, {
+            userId,
+            prompt,
+            projectDir: project,
+            chatId: requireChat(ctx),
+            runId: meta.runId,
+            sessionId: attempt.fallbackAttempted ? undefined : sessionId,
+            model: attempt.model,
+            effort,
+          });
+          result = await streamToTelegram(
+            ctx,
+            events,
+            projectName,
+            getCapabilities(provider),
+            { branchName }
+          );
+          if (result.sessionId) {
+            // Persisted by the runner's stream tap (session_init + result); here
+            // it is copied only to the matching attempt's wide event.
+            rec.sessionId = result.sessionId;
+          }
+          applyResultEconomics(result, rec);
+
+          if (result.planPath && getCapabilities(provider).planMode) {
+            stopAgent(userId, "stopped");
+            await presentPlan(ctx, userId, state, result);
+            presentedPlan = true;
+          }
+        } catch (e) {
+          rec.outcome = "errored";
+          rec.errorClass =
+            (e as { _tag?: string })?._tag ??
+            (e as Error)?.name ??
+            "ProviderCrashed";
+          rec.errorMessage = clipError(String((e as Error)?.message ?? e));
+          console.error("runAndDrain error:", e);
+        } finally {
+          await emitRunEvent(rec, meta);
+        }
+        return { ...result, presentedPlan };
+      },
+      beforeFallback: async () => {
+        // `resumedSession` is false by classifier contract, so this can only
+        // clear the newly created failed Codex session for this project.
+        await runtime.runPromise(clearSession(project, "codex"));
+        await ctx.reply(
+          "Astra non disponibile prima dell'avvio: riprovo una volta con Sol. Nessun lavoro è stato ripetuto."
+        );
+      },
+    });
+
+    return outcome.presentedPlan;
   }
 
   /** Notify the user that a queued message is now being processed */
