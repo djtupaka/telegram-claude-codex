@@ -63,6 +63,10 @@ Two Effect checkouts are cloned locally for reference (we're mid-transition, so 
 
 Use these to explore APIs, find usage examples, and understand implementation details when the documentation isn't enough. Check the version that matches the code you're touching; when in doubt, consult both.
 
-## Code Quality:
+## Agent Workflow Contract
 
-When writing or reviewing TypeScript/full-stack code, follow the `quality-code` skill (`.agents/skills/quality-code/SKILL.md`). It loads on demand — invoke it for the full standards.
+User instructions decide outcomes and scope and override skill workflow guidance;
+system requirements and safety invariants remain binding. Scale process, tests,
+and review to task risk, and stop verification when fresh evidence satisfies the
+approved task. Preserve root-cause diagnosis, isolation for risky work, approval
+before destructive or scope-expanding action, and evidence before completion.
