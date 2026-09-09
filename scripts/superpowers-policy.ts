@@ -4,9 +4,11 @@ import {
   closeSync,
   existsSync,
   fsyncSync,
+  lstatSync,
   mkdirSync,
   openSync,
   readFileSync,
+  realpathSync,
   renameSync,
   rmSync,
   writeFileSync,
@@ -24,6 +26,13 @@ const WEAK_ROOT_CAUSE = /(?:skip|omit|bypass)\s+(?:root-cause\s+)?diagnos/i;
 const WEAK_COMPLETION =
   /(?:claim|report).{0,40}(?:success|complete).{0,30}without.{0,20}(?:evidence|test|verif)/is;
 const HOST_DESTRUCTIVE = /\b(?:restart|kill)\s+(?:the\s+)?host\b/i;
+const CONTRADICTORY_STOP =
+  /\b(?:restart|stop|kill)\s+(?:the\s+)?(?:host(?:\s+application)?|bot|app(?:lication)?|session)\b/i;
+const CONTRADICTORY_SESSION_DELETE =
+  /\b(?:clear|destroy|delete|reset)\s+(?:the\s+)?session\b/i;
+const CONTRADICTORY_SAFETY_SKIP =
+  /\b(?:skip|omit|bypass)\s+(?:(?:the|all)\s+)?(?:investigation|diagnosis|root-cause|tests?|testing|verification)\b/i;
+const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 
 export interface PolicyTexts {
   brainstorming: string;
@@ -56,6 +65,7 @@ interface BackupEntry {
   backupFile: string | null;
   installedSha256: string;
   originalExisted: boolean;
+  originalMode?: number | null;
   originalSha256: string | null;
 }
 
@@ -267,6 +277,26 @@ export const validatePolicy = (texts: PolicyTexts): PolicyViolation[] => {
         "Policy permits restarting or killing the host"
       );
     }
+    const contradictoryText = text.replace(REPETITION_RULE, "");
+    if (
+      CONTRADICTORY_STOP.test(contradictoryText) ||
+      CONTRADICTORY_SESSION_DELETE.test(contradictoryText)
+    ) {
+      appendViolation(
+        violations,
+        name,
+        "contradictory-host-or-session-action",
+        "Policy contains a host, bot, application, or session destructive instruction"
+      );
+    }
+    if (CONTRADICTORY_SAFETY_SKIP.test(contradictoryText)) {
+      appendViolation(
+        violations,
+        name,
+        "contradictory-safety-skip",
+        "Policy contains an instruction to skip investigation, testing, or verification"
+      );
+    }
   }
 
   return violations;
@@ -303,9 +333,41 @@ const atomicWrite = (
 
 const defaultOperations: PolicyFileOperations = { rename: renameSync };
 
+interface TargetState {
+  bytes: Uint8Array;
+  mode: number;
+  sha256: string;
+}
+
+const readRegularFile = (
+  path: string,
+  label: string,
+  confinedParent?: string
+): TargetState => {
+  const metadata = lstatSync(path);
+  if (metadata.isSymbolicLink() || !metadata.isFile()) {
+    throw new Error(`${label} must be a regular non-symlink file`);
+  }
+  if (confinedParent) {
+    const realParent = realpathSync(confinedParent);
+    const realFile = realpathSync(path);
+    if (dirname(realFile) !== realParent) {
+      throw new Error(`${label} is not confined to its backup directory`);
+    }
+  }
+  const bytes = readFileSync(path);
+  return { bytes, mode: metadata.mode % 0o1000, sha256: sha256(bytes) };
+};
+
 const parseManifest = (backupDir: string): BackupManifest => {
-  const raw = readFileSync(join(backupDir, "manifest.json"), "utf8");
-  const parsed: unknown = JSON.parse(raw);
+  const manifestState = readRegularFile(
+    join(backupDir, "manifest.json"),
+    "Policy backup manifest",
+    backupDir
+  );
+  const parsed: unknown = JSON.parse(
+    Buffer.from(manifestState.bytes).toString("utf8")
+  );
   if (!(parsed && typeof parsed === "object")) {
     throw new Error("Invalid policy backup manifest");
   }
@@ -323,11 +385,18 @@ const parseManifest = (backupDir: string): BackupManifest => {
     if (
       !entry ||
       typeof entry.installedSha256 !== "string" ||
+      !SHA256_PATTERN.test(entry.installedSha256) ||
       typeof entry.originalExisted !== "boolean" ||
       (entry.backupFile !== null &&
         entry.backupFile !== backupFileName(name)) ||
       (entry.originalSha256 !== null &&
-        typeof entry.originalSha256 !== "string") ||
+        (typeof entry.originalSha256 !== "string" ||
+          !SHA256_PATTERN.test(entry.originalSha256))) ||
+      (entry.originalMode !== undefined &&
+        entry.originalMode !== null &&
+        (!Number.isInteger(entry.originalMode) ||
+          entry.originalMode < 0 ||
+          entry.originalMode > 0o777)) ||
       entry.originalExisted !== (entry.backupFile !== null) ||
       entry.originalExisted !== (entry.originalSha256 !== null)
     ) {
@@ -339,21 +408,22 @@ const parseManifest = (backupDir: string): BackupManifest => {
 
 const assertApprovedBackupDir = (backupDir: string, backupRoot: string) => {
   const resolvedBackup = resolve(backupDir);
+  const backupMetadata = lstatSync(resolvedBackup);
+  if (backupMetadata.isSymbolicLink() || !backupMetadata.isDirectory()) {
+    throw new Error("Policy backup must be a non-symlink directory");
+  }
+  const realBackupRoot = realpathSync(resolve(backupRoot));
+  const realBackup = realpathSync(resolvedBackup);
   if (
-    dirname(resolvedBackup) !== resolve(backupRoot) ||
+    dirname(realBackup) !== realBackupRoot ||
     !basename(resolvedBackup).startsWith(BACKUP_PREFIX)
   ) {
     throw new Error("Restore path is not an approved policy backup directory");
   }
 };
 
-const restoreFromManifest = (
-  backupDir: string,
-  manifest: BackupManifest,
-  skillRoot: string,
-  operations: PolicyFileOperations
-) => {
-  const originals = new Map<PolicyName, Uint8Array | null>();
+const readBackupStates = (backupDir: string, manifest: BackupManifest) => {
+  const originals = new Map<PolicyName, TargetState | null>();
   for (const name of POLICY_NAMES) {
     const entry = manifest.files[name];
     if (!entry.originalExisted) {
@@ -363,24 +433,83 @@ const restoreFromManifest = (
     if (!(entry.backupFile && entry.originalSha256)) {
       throw new Error(`Missing backup metadata for ${name}`);
     }
-    const bytes = readFileSync(join(backupDir, entry.backupFile));
-    if (sha256(bytes) !== entry.originalSha256) {
+    const state = readRegularFile(
+      join(backupDir, entry.backupFile),
+      `Policy backup entry ${name}`,
+      backupDir
+    );
+    if (state.sha256 !== entry.originalSha256) {
       throw new Error(`Backup hash mismatch for ${name}`);
     }
-    originals.set(name, bytes);
+    originals.set(name, {
+      ...state,
+      mode: entry.originalMode ?? 0o600,
+    });
   }
+  return originals;
+};
 
+const captureTargetStates = (skillRoot: string) => {
+  const states = new Map<PolicyName, TargetState | null>();
   for (const name of POLICY_NAMES) {
     const destination = policyPath(skillRoot, name);
-    const bytes = originals.get(name);
-    if (bytes === null) {
+    if (!existsSync(destination)) {
+      states.set(name, null);
+      continue;
+    }
+    states.set(name, readRegularFile(destination, `Policy target ${name}`));
+  }
+  return states;
+};
+
+const applyTargetStates = (
+  states: Map<PolicyName, TargetState | null>,
+  skillRoot: string,
+  operations: PolicyFileOperations,
+  action: string
+) => {
+  for (const name of POLICY_NAMES) {
+    const destination = policyPath(skillRoot, name);
+    const state = states.get(name);
+    if (state === null) {
       rmSync(destination, { force: true });
-    } else if (bytes) {
-      atomicWrite(destination, bytes, operations);
+    } else if (state) {
+      atomicWrite(destination, state.bytes, operations, state.mode);
     } else {
-      throw new Error(`Missing validated backup for ${name}`);
+      throw new Error(`Missing ${action} state for ${name}`);
     }
   }
+  for (const name of POLICY_NAMES) {
+    const destination = policyPath(skillRoot, name);
+    const expected = states.get(name);
+    if (expected === null) {
+      if (existsSync(destination)) {
+        throw new Error(`${action} verification failed for ${name}`);
+      }
+      continue;
+    }
+    if (!expected) {
+      throw new Error(`Missing ${action} verification state for ${name}`);
+    }
+    const actual = readRegularFile(destination, `Policy target ${name}`);
+    if (actual.sha256 !== expected.sha256 || actual.mode !== expected.mode) {
+      throw new Error(`${action} verification failed for ${name}`);
+    }
+  }
+};
+
+const restoreFromManifest = (
+  backupDir: string,
+  manifest: BackupManifest,
+  skillRoot: string,
+  operations: PolicyFileOperations
+) => {
+  applyTargetStates(
+    readBackupStates(backupDir, manifest),
+    skillRoot,
+    operations,
+    "Policy restore"
+  );
 };
 
 export const installPolicy = (options: InstallPolicyOptions = {}) => {
@@ -415,12 +544,14 @@ export const installPolicy = (options: InstallPolicyOptions = {}) => {
         backupFile: null,
         installedSha256: sha256(canonical.brainstorming),
         originalExisted: false,
+        originalMode: null,
         originalSha256: null,
       },
       "using-superpowers": {
         backupFile: null,
         installedSha256: sha256(canonical.usingSuperpowers),
         originalExisted: false,
+        originalMode: null,
         originalSha256: null,
       },
     },
@@ -432,12 +563,13 @@ export const installPolicy = (options: InstallPolicyOptions = {}) => {
     const destination = policyPath(paths.skillRoot, name);
     const entry = manifest.files[name];
     if (existsSync(destination)) {
-      const bytes = readFileSync(destination);
+      const original = readRegularFile(destination, `Policy target ${name}`);
       entry.backupFile = backupFileName(name);
       entry.originalExisted = true;
-      entry.originalSha256 = sha256(bytes);
+      entry.originalMode = original.mode;
+      entry.originalSha256 = original.sha256;
       const backupPath = join(backupDir, entry.backupFile);
-      writeFileSync(backupPath, bytes, { mode: 0o600 });
+      writeFileSync(backupPath, original.bytes, { mode: 0o600 });
       chmodSync(backupPath, 0o600);
     }
   }
@@ -462,7 +594,14 @@ export const installPolicy = (options: InstallPolicyOptions = {}) => {
       }
     }
   } catch (error) {
-    restoreFromManifest(backupDir, manifest, paths.skillRoot, operations);
+    try {
+      restoreFromManifest(backupDir, manifest, paths.skillRoot, operations);
+    } catch (rollbackError) {
+      throw new AggregateError(
+        [error, rollbackError],
+        "Policy installation failed and rollback failed"
+      );
+    }
     throw error;
   }
 
@@ -483,7 +622,26 @@ export const restorePolicy = (
   assertApprovedBackupDir(resolvedBackup, paths.backupRoot);
   const manifest = parseManifest(resolvedBackup);
   const operations = { ...defaultOperations, ...options.operations };
-  restoreFromManifest(resolvedBackup, manifest, paths.skillRoot, operations);
+  const desired = readBackupStates(resolvedBackup, manifest);
+  const beforeRestore = captureTargetStates(paths.skillRoot);
+  try {
+    applyTargetStates(desired, paths.skillRoot, operations, "Policy restore");
+  } catch (error) {
+    try {
+      applyTargetStates(
+        beforeRestore,
+        paths.skillRoot,
+        operations,
+        "Policy restore rollback"
+      );
+    } catch (rollbackError) {
+      throw new AggregateError(
+        [error, rollbackError],
+        "Policy restore failed and rollback failed"
+      );
+    }
+    throw error;
+  }
   return { backupDir: resolvedBackup };
 };
 
