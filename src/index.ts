@@ -5,7 +5,7 @@ import { getProvider } from "./agent/registry";
 import { cleanupStaleState } from "./bot";
 import { AppConfig } from "./config";
 import { runtime } from "./runtime";
-import { loadPersistedState } from "./state";
+import { DEFAULT_PROVIDER, loadPersistedState } from "./state";
 import { BotService } from "./telegram/bot-service";
 
 /** Warn (but never block startup) if the Codex CLI is missing or not logged in */
@@ -99,7 +99,7 @@ bot.start({
       scopes.map((scope) => bot.api.setMyCommands(commands, { scope }))
     ).catch((e) => console.error("Failed to set bot commands:", e));
     const persisted = loadPersistedState();
-    const providerId = persisted?.activeProvider ?? "claude";
+    const providerId = persisted?.activeProvider ?? DEFAULT_PROVIDER;
     let providerName: string = providerId;
     try {
       providerName = getProvider(providerId).displayName;
