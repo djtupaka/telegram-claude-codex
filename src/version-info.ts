@@ -3,8 +3,13 @@ import { join } from "node:path";
 
 const DEFAULT_PACKAGE_PATH = join(import.meta.dir, "..", "package.json");
 const COMMAND_TIMEOUT_MS = 2000;
+const COMMAND_KILL_MS = 1750;
 const MAX_VERSION_CHARS = 120;
 const MAX_COMMAND_OUTPUT_CHARS = 512;
+const BEARER_SECRET = /\bbearer\s+[^\s,;]+/gi;
+const NAMED_SECRET =
+  /\b([a-z0-9_.-]*(?:api[_-]?key|token|password|secret)[a-z0-9_.-]*)(\s*(?:=|:)\s*|\s+)([^\s,;]+)/gi;
+const OPENAI_SECRET = /\bsk-[a-z0-9_-]{6,}\b/gi;
 
 interface PackageMetadata {
   dependencies?: Record<string, unknown>;
@@ -44,14 +49,26 @@ const sanitizeVersion = (value: string | undefined) => {
   if (!value) {
     return undefined;
   }
-  const newlineAt = value.indexOf("\n");
-  const firstLine = newlineAt === -1 ? value : value.slice(0, newlineAt);
-  const sanitized = Array.from(firstLine, (character) => {
+  const crAt = value.indexOf("\r");
+  const lfAt = value.indexOf("\n");
+  const boundaries = [crAt, lfAt].filter((index) => index >= 0);
+  const boundary =
+    boundaries.length > 0 ? Math.min(...boundaries) : value.length;
+  const firstLine = value.slice(0, boundary);
+  const normalized = Array.from(firstLine, (character) => {
     const code = character.charCodeAt(0);
     return code < 32 || code === 127 ? " " : character;
   })
     .join("")
-    .trim()
+    .trim();
+  const sanitized = normalized
+    .replace(BEARER_SECRET, "Bearer [redacted]")
+    .replace(
+      NAMED_SECRET,
+      (_match, name: string, separator: string) =>
+        `${name}${separator}[redacted]`
+    )
+    .replace(OPENAI_SECRET, "[redacted]")
     .slice(0, MAX_VERSION_CHARS);
   return sanitized || undefined;
 };
@@ -74,7 +91,7 @@ const readBoundedStdout = async (stdout: ReadableStream<Uint8Array>) => {
         break;
       }
       output += decoder.decode(chunk.value, { stream: true });
-      if (output.includes("\n")) {
+      if (output.includes("\n") || output.includes("\r")) {
         break;
       }
     }
@@ -85,7 +102,7 @@ const readBoundedStdout = async (stdout: ReadableStream<Uint8Array>) => {
   }
 };
 
-const defaultRunCommand: VersionCommandRunner = async (command) => {
+export const runVersionCommand: VersionCommandRunner = async (command) => {
   try {
     const proc = Bun.spawn({
       cmd: [command, "--version"],
@@ -93,38 +110,43 @@ const defaultRunCommand: VersionCommandRunner = async (command) => {
       stderr: "ignore",
       stdout: "pipe",
     });
+    const failedMarker: unique symbol = Symbol("version-command-failed");
     const completed = Promise.all([
       readBoundedStdout(proc.stdout),
       proc.exited,
-    ]).then(([stdout, exitCode]) => (exitCode === 0 ? stdout : undefined));
-    let timedOut = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
+    ]).then(
+      ([stdout, exitCode]) => (exitCode === 0 ? stdout : undefined),
+      () => failedMarker
+    );
+    const timeoutMarker: unique symbol = Symbol("version-command-timeout");
+    let cancelKillTimer: () => void = () => undefined;
+    const timeout = new Promise<typeof timeoutMarker>((resolve) => {
+      const timer = setTimeout(() => {
+        try {
+          process.kill(-proc.pid, "SIGKILL");
+        } catch {
+          proc.kill();
+        }
+        resolve(timeoutMarker);
+      }, COMMAND_KILL_MS);
+      cancelKillTimer = () => clearTimeout(timer);
+    });
+    const outcome = await Promise.race([completed, timeout]);
+    cancelKillTimer();
+    if (typeof outcome === "string" || outcome === undefined) {
+      return outcome;
+    }
+    if (outcome === failedMarker) {
       try {
         process.kill(-proc.pid, "SIGKILL");
       } catch {
         proc.kill();
       }
-    }, COMMAND_TIMEOUT_MS - 100);
-    let cancelDeadline: () => void = () => undefined;
-    try {
-      return await Promise.race([
-        completed,
-        new Promise<undefined>((resolve) => {
-          const deadline = setTimeout(
-            () => resolve(undefined),
-            COMMAND_TIMEOUT_MS
-          );
-          cancelDeadline = () => clearTimeout(deadline);
-        }),
-      ]);
-    } finally {
-      clearTimeout(timer);
-      cancelDeadline();
-      if (timedOut) {
-        proc.unref();
-      }
     }
+    // SIGKILL was sent before the two-second outer deadline. Awaiting the
+    // direct child here reaps it, preventing a zombie or leaked subprocess.
+    await proc.exited;
+    return undefined;
   } catch {
     return undefined;
   }
@@ -152,7 +174,7 @@ const runBounded = async (
 
 /** Collect bounded, one-line runtime diagnostics without exposing stderr. */
 export const collectRuntimeVersions = async (
-  runCommand: VersionCommandRunner = defaultRunCommand,
+  runCommand: VersionCommandRunner = runVersionCommand,
   packagePath = DEFAULT_PACKAGE_PATH
 ): Promise<RuntimeVersions> => {
   const metadata = readPackageMetadata(packagePath);

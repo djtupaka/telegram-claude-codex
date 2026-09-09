@@ -29,6 +29,7 @@ import {
   UPDATE_RECEIVED_MARKER,
   UpdateReceivedEvent,
 } from "./observability";
+import { BOT_VERSION } from "./version-info";
 
 let dir: string;
 let logPath: string;
@@ -87,7 +88,7 @@ const baseEvent = (over: Partial<ConstructorParameters<typeof RunEvent>[0]>) =>
     totalTokens: 1234,
     durationMs: 5000,
     queueDepth: 0,
-    version: "0.0.0",
+    version: BOT_VERSION,
     host: "test-host",
     ...over,
   });
@@ -212,7 +213,7 @@ describe("Observability.recordLifecycle", () => {
           updateId: 42,
           userId: 1,
           kind: "text",
-          version: "0.0.0",
+          version: BOT_VERSION,
           host: "test-host",
         })
       );
@@ -245,7 +246,7 @@ describe("Observability.recordLifecycle", () => {
           model: null,
           effort: "medium",
           queueDepth: 2,
-          version: "0.0.0",
+          version: BOT_VERSION,
           host: "test-host",
         })
       );
