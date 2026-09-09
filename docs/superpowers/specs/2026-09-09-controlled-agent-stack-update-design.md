@@ -62,9 +62,18 @@ reported as a warning, not repaired or logged in automatically.
 
 Add GPT-6 Astra to the Codex model menu and make `gpt-6-astra` with `medium`
 effort the default for new Codex sessions. Keep GPT-5.6 Sol selectable as the
-known fallback. Add the documented `max` effort option to both Codex and Claude
-menus; `high`, `xhigh`, and `max` remain explicit user choices rather than being
-selected automatically.
+known fallback. Make Codex the default provider for fresh, missing, or invalid
+provider state, while preserving an explicitly persisted Claude selection.
+Make Claude a
+fully current fallback: its provider default is `claude-fable-5-1`, and its
+compact visible catalog contains `claude-fable-5-1`, `claude-opus-5`,
+`claude-sonnet-5`, and `claude-haiku-4-5-20251001` plus the default sentinel.
+Do not expose superseded model generations merely because they remain active.
+Migrate the legacy Claude aliases `fable`, `opus`, `sonnet`, and `haiku` once to
+those exact current identifiers, while preserving already-current identifiers
+and the default sentinel. Add the documented `max` effort option to both Codex
+and Claude menus; `high`, `xhigh`, and `max` remain explicit user choices rather
+than being selected automatically.
 
 Existing in-flight runs are never changed. A controlled post-update test uses a
 disposable session before the production default is activated. At cutover, the

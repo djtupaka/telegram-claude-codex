@@ -68,7 +68,9 @@
 
 **Interfaces:**
 - Produces: `resolveModelChoice(provider, stored): string`, `resolveEffortChoice(provider, stored): string`, `AgentProvider.defaultModel`, and `getDefaultModel(providerId): string`.
+- Produces: default provider `codex` for fresh, missing, or invalid provider state, while preserving a valid explicitly persisted `claude` selection.
 - Produces: state schema version `2`, whose one-time migration changes the pre-cutover Codex selection `undefined`, `default`, or `gpt-5.6-sol` to `gpt-6-astra` while preserving explicit Terra/Luna selections.
+- Produces: the same migration maps legacy Claude aliases `fable`, `opus`, `sonnet`, and `haiku` to `claude-fable-5-1`, `claude-opus-5`, `claude-sonnet-5`, and `claude-haiku-4-5-20251001`; it preserves the default sentinel and exact current IDs.
 - Produces: exported `parseStateForTest(text): ParsedState` as a test-only alias over the same pure parser used by `readStateFile`; production loading must not have a second parser.
 
 - [ ] **Step 1: Write failing provider-choice and state-migration tests**
@@ -103,6 +105,28 @@ test("version-2 explicit Sol choice is preserved", () => {
   }));
   expect(parsed.models.codex).toBe("gpt-5.6-sol");
 });
+
+test("Claude uses Fable 5.1 and exposes only the compact current catalog", () => {
+  expect(claudeProvider.defaultModel).toBe("claude-fable-5-1");
+  expect(claudeProvider.models.map(({ id }) => id)).toEqual([
+    "default",
+    "claude-fable-5-1",
+    "claude-opus-5",
+    "claude-sonnet-5",
+    "claude-haiku-4-5-20251001",
+  ]);
+});
+
+test("version-1 Claude aliases migrate once to current exact IDs", () => {
+  const parsed = parseStateForTest(JSON.stringify({
+    version: 1,
+    activeProvider: "codex",
+    activeProject: "",
+    models: { claude: "fable" },
+  }));
+  expect(parsed.models.claude).toBe("claude-fable-5-1");
+  expect(parsed.needsPersist).toBe(true);
+});
 ```
 
 - [ ] **Step 2: Run the focused tests and confirm the expected failures**
@@ -125,7 +149,8 @@ export const resolveEffortChoice = (
 ) => !stored || stored === "default" ? provider.defaultEffort : stored;
 ```
 
-Add `defaultModel: string` to `AgentProvider`. Set Codex to `gpt-6-astra`/`medium`, with models `default`, Astra, Sol, Terra, Luna and efforts `low`, `medium`, `high`, `xhigh`, `max`. Set Claude's existing default model sentinel unchanged and append `max` to its effort list. Increment `STATE_VERSION` to `2`; persist a migrated state atomically during load only when the source version is older.
+Add `defaultModel: string` to `AgentProvider`. Set Codex to `gpt-6-astra`/`medium`, with models `default`, Astra, Sol, Terra, Luna and efforts `low`, `medium`, `high`, `xhigh`, `max`. Keep Codex as the overall active provider. Set Claude's provider default to `claude-fable-5-1`; expose only `default`, `claude-fable-5-1`, `claude-opus-5`, `claude-sonnet-5`, and `claude-haiku-4-5-20251001`, and append `max` to its effort list. Increment `STATE_VERSION` to `2`; persist a migrated state atomically during load only when the source version is older, including the legacy Claude alias mappings specified above.
+Use `codex` as the provider fallback for fresh, missing, or invalid state, but do not overwrite a valid explicit `claude` selection.
 
 - [ ] **Step 4: Pin project packages and regenerate the lockfile**
 
