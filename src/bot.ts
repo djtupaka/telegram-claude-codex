@@ -28,6 +28,7 @@ import { resolveEffortChoice, resolveModelChoice } from "./agent/preferences";
 import { getProvider, listProviders } from "./agent/registry";
 import {
   clearSession,
+  clearSessionIfMatches,
   countSessions,
   getSession,
   setSession,
@@ -1474,13 +1475,24 @@ export function createBot(
         }
         return { ...result, presentedPlan };
       },
-      beforeFallback: async () => {
+      beforeFallback: async (failed) => {
         // `resumedSession` is false by classifier contract, so this can only
         // clear the newly created failed Codex session for this project.
-        await runtime.runPromise(clearSession(project, "codex"));
+        if (failed.sessionId) {
+          const cleared = await runtime.runPromise(
+            clearSessionIfMatches(project, "codex", failed.sessionId)
+          );
+          if (!cleared) {
+            await ctx.reply(
+              "Fallback non avviato: la sessione Codex è cambiata mentre Astra terminava. La nuova sessione è stata conservata."
+            );
+            return false;
+          }
+        }
         await ctx.reply(
           "Astra non disponibile prima dell'avvio: riprovo una volta con Sol. Nessun lavoro è stato ripetuto."
         );
+        return true;
       },
     });
 

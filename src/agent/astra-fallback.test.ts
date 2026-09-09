@@ -3,7 +3,7 @@ import {
   runWithAstraStartupFallback,
   shouldFallbackToSol,
 } from "./astra-fallback";
-import { AtCapacity } from "./errors";
+import { AtCapacity, ProviderCrashed } from "./errors";
 
 const eligible = {
   provider: "codex" as const,
@@ -77,6 +77,7 @@ describe("runWithAstraStartupFallback", () => {
       },
       beforeFallback: async () => {
         calls.push("before-fallback");
+        return undefined;
       },
     });
 
@@ -86,6 +87,34 @@ describe("runWithAstraStartupFallback", () => {
       "before-fallback",
       "execute:gpt-5.6-sol:sol-run",
     ]);
+  });
+
+  test("uses the preserved provider startup signal when a terminal wrapper follows", async () => {
+    let attempts = 0;
+    const result = await runWithAstraStartupFallback({
+      provider: "codex",
+      model: "gpt-6-astra",
+      resumedSession: false,
+      runIds: ["astra-run", "sol-run"],
+      executeAttempt: async (attempt) => {
+        attempts += 1;
+        return attempt.fallbackAttempted
+          ? { value: "sol-ok" }
+          : {
+              value: "wrapped-failure",
+              providerStartupErrorMessage: "Selected model is at capacity.",
+              errorMessage: "Codex SDK subprocess exited with code 1",
+              errorClass: new ProviderCrashed({
+                message: "Codex SDK subprocess exited with code 1",
+              }),
+              observableWorkStarted: false,
+            };
+      },
+      beforeFallback: async () => undefined,
+    });
+
+    expect(result.value).toBe("sol-ok");
+    expect(attempts).toBe(2);
   });
 
   test("does not request a second generator after observable work", async () => {
@@ -109,6 +138,28 @@ describe("runWithAstraStartupFallback", () => {
     });
 
     expect(result.value).toBe("partial");
+    expect(attempts).toBe(1);
+  });
+
+  test("does not retry when identity-scoped cleanup loses a race", async () => {
+    let attempts = 0;
+    const result = await runWithAstraStartupFallback({
+      provider: "codex",
+      model: "gpt-6-astra",
+      resumedSession: false,
+      runIds: ["astra-run", "unused-sol-run"],
+      executeAttempt: async () => {
+        attempts += 1;
+        return {
+          value: "failed",
+          providerStartupErrorMessage: "Selected model is at capacity.",
+          observableWorkStarted: false,
+        };
+      },
+      beforeFallback: async () => false,
+    });
+
+    expect(result.value).toBe("failed");
     expect(attempts).toBe(1);
   });
 

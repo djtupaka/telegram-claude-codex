@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { Context } from "grammy";
-import { AgentInterrupted } from "./agent/errors";
+import { AgentInterrupted, ProviderCrashed } from "./agent/errors";
 import type { AgentEvent, ProviderCapabilities } from "./agent/types";
 import { splitText, streamToTelegram } from "./telegram";
 
@@ -147,6 +147,26 @@ describe("streamToTelegram", () => {
       "Selected model is at capacity. Please try a different model.";
     const { result } = await run([{ kind: "error", message: exact }]);
     expect(result.errorMessage).toBe(exact);
+    expect(result.observableWorkStarted).toBe(false);
+  });
+
+  test("preserves a raw startup-capacity signal across a terminal wrapper error", async () => {
+    const capacity =
+      "Selected model is at capacity. Please try a different model.";
+    const terminal = "Codex SDK subprocess exited with code 1";
+    const { result } = await run([
+      { kind: "session_init", sessionId: "failed-session" },
+      { kind: "error", message: capacity },
+      {
+        kind: "error",
+        message: terminal,
+        class: new ProviderCrashed({ message: terminal }),
+      },
+    ]);
+
+    expect(result.providerStartupErrorMessage).toBe(capacity);
+    expect(result.errorMessage).toBe(terminal);
+    expect(result.errorClass?._tag).toBe("ProviderCrashed");
     expect(result.observableWorkStarted).toBe(false);
   });
 

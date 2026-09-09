@@ -75,6 +75,24 @@ describe("SessionStore ops", () => {
     expect(ops.get("/proj", "codex")).toBe("x-1");
   });
 
+  test("compare-and-clear removes only the exact failed session identity", () => {
+    const ops = makeSessionOps(storePath);
+    ops.set("/proj", "codex", "failed-session");
+
+    expect(ops.clearIfMatches("/proj", "codex", "failed-session")).toBe(true);
+    expect(ops.get("/proj", "codex")).toBeUndefined();
+    expect(ops.clearIfMatches("/proj", "codex", "failed-session")).toBe(false);
+  });
+
+  test("compare-and-clear preserves a concurrently replaced session", () => {
+    const ops = makeSessionOps(storePath);
+    ops.set("/proj", "codex", "failed-session");
+    ops.set("/proj", "codex", "replacement-session");
+
+    expect(ops.clearIfMatches("/proj", "codex", "failed-session")).toBe(false);
+    expect(ops.get("/proj", "codex")).toBe("replacement-session");
+  });
+
   test("count reflects projects with an id for the provider", () => {
     const ops = makeSessionOps(storePath);
     ops.set("/a", "claude", "1");

@@ -88,6 +88,21 @@ export const makeSessionOps = (path: string) => {
     }
   };
 
+  const clearIfMatches = (
+    project: string,
+    provider: ProviderId,
+    expectedSessionId: string
+  ) => {
+    const store = readStore();
+    const forProject = store.sessions[project];
+    if (forProject?.[provider]?.sessionId !== expectedSessionId) {
+      return false;
+    }
+    delete forProject[provider];
+    writeStore(store);
+    return true;
+  };
+
   const count = (provider: ProviderId) =>
     Object.values(readStore().sessions).filter((p) => p[provider]?.sessionId)
       .length;
@@ -115,7 +130,7 @@ export const makeSessionOps = (path: string) => {
     }
   };
 
-  return { get, set, clear, count, importLegacy } as const;
+  return { get, set, clear, clearIfMatches, count, importLegacy } as const;
 };
 
 const defaultOps = makeSessionOps(SESSIONS_FILE);
@@ -132,6 +147,14 @@ const make = Effect.sync(() => ({
     ),
   clear: (project: string, provider: ProviderId) =>
     Effect.sync(() => defaultOps.clear(project, provider)),
+  clearIfMatches: (
+    project: string,
+    provider: ProviderId,
+    expectedSessionId: string
+  ) =>
+    Effect.sync(() =>
+      defaultOps.clearIfMatches(project, provider, expectedSessionId)
+    ),
   count: (provider: ProviderId) =>
     Effect.sync(() => defaultOps.count(provider)),
 }));
@@ -159,5 +182,13 @@ export const setSession = (args: {
 }) => Effect.flatMap(SessionStore, (s) => s.set(args));
 export const clearSession = (project: string, provider: ProviderId) =>
   Effect.flatMap(SessionStore, (s) => s.clear(project, provider));
+export const clearSessionIfMatches = (
+  project: string,
+  provider: ProviderId,
+  expectedSessionId: string
+) =>
+  Effect.flatMap(SessionStore, (s) =>
+    s.clearIfMatches(project, provider, expectedSessionId)
+  );
 export const countSessions = (provider: ProviderId) =>
   Effect.flatMap(SessionStore, (s) => s.count(provider));

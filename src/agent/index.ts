@@ -29,7 +29,7 @@ export async function* runAgent(
       // Persist the session id as soon as it exists — on session_init AND result,
       // not result-only — so an interrupted run's session is still resumable.
       if (event.kind === "session_init" || event.kind === "result") {
-        runtime.runFork(
+        await runtime.runPromise(
           setSession({
             project: opts.projectDir,
             provider: providerId,

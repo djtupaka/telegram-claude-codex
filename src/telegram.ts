@@ -1,5 +1,6 @@
 import { Effect } from "effect";
 import type { Context } from "grammy";
+import { isModelStartupUnavailableMessage } from "./agent/astra-fallback";
 import type { AgentError } from "./agent/errors";
 import { classifyOutcome } from "./agent/errors";
 import type { AgentEvent, ProviderCapabilities } from "./agent/types";
@@ -114,6 +115,7 @@ export interface StreamResult {
   messageId?: number;
   observableWorkStarted?: boolean;
   planPath?: string;
+  providerStartupErrorMessage?: string;
   sessionId?: string;
   totalTokens?: number;
   turns?: number;
@@ -399,6 +401,16 @@ const handleError = async (s: StreamCtx, event: EventOf<"error">) => {
   }
   if (event.class) {
     s.result.errorClass = event.class;
+  }
+  if (
+    !(
+      event.class ||
+      s.result.observableWorkStarted ||
+      s.result.providerStartupErrorMessage
+    ) &&
+    isModelStartupUnavailableMessage(event.message)
+  ) {
+    s.result.providerStartupErrorMessage = event.message;
   }
   s.result.errorMessage = event.message;
   const copy = event.class ? classifyOutcome(event.class).copy : event.message;

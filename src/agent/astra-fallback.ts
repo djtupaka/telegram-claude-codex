@@ -6,6 +6,10 @@ export const SOL_MODEL = "gpt-5.6-sol";
 const START_FAILURE =
   /selected model.*(?:capacity|unavailable)|model.*not available/i;
 
+/** True only for the narrow raw provider wording eligible for startup fallback. */
+export const isModelStartupUnavailableMessage = (message?: string) =>
+  START_FAILURE.test(message ?? "");
+
 export interface FallbackInput {
   errorClass?: AgentError;
   errorMessage?: string;
@@ -28,7 +32,7 @@ export const shouldFallbackToSol = (input: FallbackInput) =>
   !input.observableWorkStarted &&
   !input.resumedSession &&
   !input.fallbackAttempted &&
-  START_FAILURE.test(input.errorMessage ?? "");
+  isModelStartupUnavailableMessage(input.errorMessage);
 
 export interface StartupAttempt {
   fallbackAttempted: boolean;
@@ -40,10 +44,11 @@ interface StartupResult {
   errorClass?: AgentError;
   errorMessage?: string;
   observableWorkStarted?: boolean;
+  providerStartupErrorMessage?: string;
 }
 
 interface StartupFallbackOptions<T extends StartupResult> {
-  beforeFallback: (failed: T) => Promise<void>;
+  beforeFallback: (failed: T) => Promise<boolean | undefined>;
   executeAttempt: (attempt: StartupAttempt) => Promise<T>;
   model: string;
   provider: ProviderId;
@@ -71,11 +76,14 @@ export const runWithAstraStartupFallback = async <T extends StartupResult>(
 
   for (const attempt of attempts) {
     const result = await options.executeAttempt(attempt);
+    const providerStartupError = result.providerStartupErrorMessage;
     const retry = shouldFallbackToSol({
       provider: options.provider,
       model: attempt.model,
-      errorMessage: result.errorMessage,
-      errorClass: result.errorClass,
+      errorMessage: providerStartupError ?? result.errorMessage,
+      // A raw provider signal remains authoritative when the SDK subsequently
+      // wraps termination in a generic classified error.
+      errorClass: providerStartupError ? undefined : result.errorClass,
       observableWorkStarted: result.observableWorkStarted ?? false,
       resumedSession: options.resumedSession,
       fallbackAttempted: attempt.fallbackAttempted,
@@ -83,7 +91,10 @@ export const runWithAstraStartupFallback = async <T extends StartupResult>(
     if (!retry) {
       return result;
     }
-    await options.beforeFallback(result);
+    const prepared = await options.beforeFallback(result);
+    if (prepared === false) {
+      return result;
+    }
   }
 
   // The second attempt always returns because fallbackAttempted is true.
