@@ -22,7 +22,8 @@ const makeBot = Effect.gen(function* () {
   const bot = createBot(
     Redacted.value(cfg.botToken),
     cfg.allowedUserId,
-    cfg.projectsDir
+    cfg.projectsDir,
+    cfg.runInactivityWarningMs
   );
 
   yield* Effect.acquireRelease(Effect.succeed(bot), () =>

@@ -72,6 +72,7 @@ All optional, with sensible defaults:
 | `CLAUDE_SETTINGS_JSON` | (hardened defaults) | JSON overlay of Claude Agent SDK `Settings` — override the default lockdown (see below) |
 | `MAX_CONCURRENT_RUNS` | `4` | Global cap on concurrent agent runs |
 | `RUN_TIMEOUT_MS` | (unbounded) | Per-run timeout in ms; unset means `/stop` is the only cancellation |
+| `RUN_INACTIVITY_WARNING_MS` | `1200000` | Warn after no meaningful progress; `0` disables, never stops the run |
 | `TG_LOG_FILE` | `.data/events.jsonl` | Wide-event log path |
 | `LOG_FORMAT` | `pretty` on a TTY, else `logfmt` | `pretty` \| `logfmt` \| `json` |
 | `LOG_LEVEL` | `Info` | Minimum log level |
@@ -80,6 +81,13 @@ All optional, with sensible defaults:
 | `ANTHROPIC_API_KEY` | (unset) | Optional API-key fallback for Docker/CI; unset keeps subscription login |
 | `EXECUTOR_MCP_URL` | (unset) | Cloud Executor's org-scoped MCP endpoint (`https://executor.sh/org_<id>/mcp`) |
 | `EXECUTOR_API_KEY` | (unset) | Executor API key; sent as `Authorization: Bearer <key>` |
+
+`RUN_INACTIVITY_WARNING_MS` is observational only. After that interval without
+a meaningful provider event, Telegram sends one notice; new progress re-arms a
+future notice. It never stops the provider, clears its session, or restarts the
+bot. Leave `RUN_TIMEOUT_MS` unset so `/stop` remains the only way to terminate a
+run. While a run is active, `/status` reports both total elapsed time and the
+age of its last meaningful progress event without labeling the run as failed.
 
 **Executor (external integrations over MCP).** Optionally wire [Executor](https://executor.sh) into every agent run as an MCP server, giving the agent a single tool surface for external systems — Notion, Google Workspace, Vercel, Atlassian, and whatever else you connect. Set both env vars (endpoint and key are minted in the Executor dashboard); when either is blank the bot runs without Executor and nothing else changes. Both providers are wired: Claude via the Agent SDK's `mcpServers`, Codex via an `mcp_servers` config override.
 

@@ -41,6 +41,15 @@ const make = Effect.gen(function* () {
   const reasons = new Map<number, InterruptReason>();
   const activeRuns = new Map<number, ActiveRunSnapshot>();
 
+  /** Ignore stale progress emitted by an older run after its replacement starts. */
+  const noteProgress = (userId: number, runId: string, at = Date.now()) =>
+    Effect.sync(() => {
+      const active = activeRuns.get(userId);
+      if (active?.runId === runId) {
+        activeRuns.set(userId, { ...active, lastProgressAt: at });
+      }
+    });
+
   /** Never let an older, interrupted fiber erase its replacement's metadata. */
   const clearActiveRun = (userId: number, runId: string) =>
     Effect.sync(() => {
@@ -131,11 +140,13 @@ const make = Effect.gen(function* () {
         QUEUE_CAPACITY
       );
       yield* Effect.sync(() => reasons.set(opts.userId, "new_prompt"));
+      const startedAt = Date.now();
       yield* Effect.sync(() =>
         activeRuns.set(opts.userId, {
           provider: spec.id,
           runId: opts.runId,
-          startedAt: Date.now(),
+          startedAt,
+          lastProgressAt: startedAt,
         })
       );
       yield* FiberMap.run(
@@ -175,7 +186,7 @@ const make = Effect.gen(function* () {
     Effect.ignore
   );
 
-  return { start, stop, has, snapshot, stopAll } as const;
+  return { start, stop, has, snapshot, noteProgress, stopAll } as const;
 });
 
 /**
@@ -200,4 +211,6 @@ export const hasRun = (userId: number) =>
   Effect.flatMap(RunRegistry, (r) => r.has(userId));
 export const getRunSnapshot = (userId: number) =>
   Effect.flatMap(RunRegistry, (r) => r.snapshot(userId));
+export const noteRunProgress = (userId: number, runId: string, at?: number) =>
+  Effect.flatMap(RunRegistry, (r) => r.noteProgress(userId, runId, at));
 export const stopAllRuns = Effect.flatMap(RunRegistry, (r) => r.stopAll);

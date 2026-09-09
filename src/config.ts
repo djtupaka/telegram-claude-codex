@@ -59,6 +59,11 @@ const load = Effect.gen(function* () {
   // Option.none => unbounded; set RUN_TIMEOUT_MS to opt back into a cap.
   const runTimeoutMs = yield* Config.option(Config.int("RUN_TIMEOUT_MS"));
 
+  // Warning-only inactivity signal. Zero disables it; it never cancels a run.
+  const runInactivityWarningMs = yield* Config.int(
+    "RUN_INACTIVITY_WARNING_MS"
+  ).pipe(Config.withDefault(1_200_000));
+
   const maxConcurrentRuns = yield* Config.int("MAX_CONCURRENT_RUNS").pipe(
     Config.withDefault(4)
   );
@@ -100,6 +105,7 @@ const load = Effect.gen(function* () {
     draftIntervalMs,
     splitAt,
     runTimeoutMs,
+    runInactivityWarningMs,
     maxConcurrentRuns,
     eventLogPath,
     claudeSettings,

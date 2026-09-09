@@ -57,6 +57,7 @@ export interface RunOptions {
 
 /** Sanitized metadata for one currently active provider run. */
 export interface ActiveRunSnapshot {
+  readonly lastProgressAt: number;
   readonly provider: ProviderId;
   readonly runId: string;
   readonly startedAt: number;

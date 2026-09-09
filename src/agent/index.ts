@@ -5,6 +5,7 @@ import { getProvider } from "./registry";
 import {
   getRunSnapshot,
   hasRun,
+  noteRunProgress,
   startRun,
   stopAllRuns,
   stopRun,
@@ -59,6 +60,10 @@ export const hasActiveProcess = (userId: number) =>
 /** Sanitized metadata for the user's active run, if any. */
 export const getActiveRunSnapshot = (userId: number) =>
   runtime.runSync(getRunSnapshot(userId));
+
+/** Record meaningful progress only if this exact run is still active. */
+export const noteAgentProgress = (userId: number, runId: string, at?: number) =>
+  runtime.runSync(noteRunProgress(userId, runId, at));
 
 /** Interrupt all runs and await settle (shutdown). */
 export const stopAll = () => runtime.runPromise(stopAllRuns);

@@ -19,6 +19,7 @@ import {
   getSessionProject,
   hasActiveProcess,
   listAllSessions,
+  noteAgentProgress,
   runAgent,
   stopAgent,
 } from "./agent";
@@ -26,6 +27,7 @@ import { runWithAstraStartupFallback } from "./agent/astra-fallback";
 import { classifyOutcome, runOutcomeOf } from "./agent/errors";
 import { resolveEffortChoice, resolveModelChoice } from "./agent/preferences";
 import { getProvider, listProviders } from "./agent/registry";
+import { formatActiveRunTiming } from "./agent/run-status";
 import {
   clearSession,
   clearSessionIfMatches,
@@ -125,13 +127,6 @@ const emitLifecycleEvent = async (
   } catch {
     // Observability must never delay or break Telegram handling.
   }
-};
-
-const formatElapsed = (startedAt: number) => {
-  const totalSeconds = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
 };
 
 /** Mutable outcome/economics accumulator for a single prompt run. */
@@ -471,7 +466,8 @@ export function cleanupStaleState() {
 export function createBot(
   token: string,
   allowedUserId: number,
-  projectsDir: string
+  projectsDir: string,
+  inactivityWarningMs = 1_200_000
 ) {
   const bot = new Bot(token);
 
@@ -786,9 +782,7 @@ export function createBot(
     const activeRun = getActiveRunSnapshot(userId);
     let running = "No";
     if (hasActiveProcess(userId)) {
-      running = activeRun
-        ? `Yes (${activeRun.provider}, ${formatElapsed(activeRun.startedAt)})`
-        : "Yes";
+      running = activeRun ? formatActiveRunTiming(activeRun) : "Yes";
     }
     const sessionCount = await runtime.runPromise(
       countSessions(state.activeProvider)
@@ -1448,7 +1442,11 @@ export function createBot(
             events,
             projectName,
             getCapabilities(provider),
-            { branchName }
+            {
+              branchName,
+              inactivityWarningMs,
+              onProgress: (at) => noteAgentProgress(userId, meta.runId, at),
+            }
           );
           if (result.sessionId) {
             // Persisted by the runner's stream tap (session_init + result); here

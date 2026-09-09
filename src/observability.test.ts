@@ -55,6 +55,7 @@ const makeRuntime = (eventLogPath: string) => {
     draftIntervalMs: 300,
     splitAt: 4000,
     runTimeoutMs: Option.none(),
+    runInactivityWarningMs: 1_200_000,
     maxConcurrentRuns: 4,
     eventLogPath,
     claudeSettings: {},

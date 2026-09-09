@@ -12,6 +12,7 @@ import {
 import {
   getRunSnapshot,
   hasRun,
+  noteRunProgress,
   RunRegistry,
   startRun,
   stopRun,
@@ -38,6 +39,7 @@ const makeRuntime = (
     draftIntervalMs: 300,
     splitAt: 4000,
     runTimeoutMs,
+    runInactivityWarningMs: 1_200_000,
     maxConcurrentRuns,
     eventLogPath: ".data/events.jsonl",
     claudeSettings: {},
@@ -217,6 +219,7 @@ describe("RunRegistry — subprocess lifecycle (fake sh provider)", () => {
         runId: "run-899",
         provider: "codex",
       });
+      expect(snapshot?.lastProgressAt).toBe(snapshot?.startedAt);
       if (snapshot) {
         (snapshot as { runId: string }).runId = "caller-mutated";
       }
@@ -230,6 +233,28 @@ describe("RunRegistry — subprocess lifecycle (fake sh provider)", () => {
       if (terminal.kind === "error") {
         expect(terminal.class?._tag).toBe("AgentInterrupted");
       }
+    } finally {
+      await rt.dispose();
+    }
+  });
+
+  test("progress advances only the matching active run", async () => {
+    const rt = makeRuntime(4, Option.none());
+    try {
+      await rt.runPromise(startRun(makeHangingSdkSpec(), makeOpts(899)));
+      const before = await rt.runPromise(getRunSnapshot(899));
+
+      await rt.runPromise(noteRunProgress(899, "wrong-run", 5000));
+      expect((await rt.runPromise(getRunSnapshot(899)))?.lastProgressAt).toBe(
+        before?.lastProgressAt
+      );
+
+      await rt.runPromise(noteRunProgress(899, "run-899", 6000));
+      expect((await rt.runPromise(getRunSnapshot(899)))?.lastProgressAt).toBe(
+        6000
+      );
+
+      await rt.runPromise(stopRun(899, "stopped"));
     } finally {
       await rt.dispose();
     }

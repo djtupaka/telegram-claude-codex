@@ -56,12 +56,17 @@ async function* scripted(events: AgentEvent[]) {
 const run = (
   events: AgentEvent[],
   caps: ProviderCapabilities = FULL_CAPS,
-  projectName = "proj"
+  projectName = "proj",
+  options?: Parameters<typeof streamToTelegram>[4]
 ) => {
   const fake = makeFakeCtx();
-  return streamToTelegram(fake.ctx, scripted(events), projectName, caps).then(
-    (result) => ({ ...fake, result })
-  );
+  return streamToTelegram(
+    fake.ctx,
+    scripted(events),
+    projectName,
+    caps,
+    options
+  ).then((result) => ({ ...fake, result }));
 };
 
 describe("splitText", () => {
@@ -198,5 +203,76 @@ describe("streamToTelegram", () => {
       { kind: "thinking_done", durationMs: 1 },
     ]);
     expect(result.observableWorkStarted).toBe(false);
+  });
+
+  test("warns without terminating the event stream", async () => {
+    const fake = makeFakeCtx();
+    let completed = false;
+    async function* delayedEvents(): AsyncGenerator<AgentEvent> {
+      await Bun.sleep(70);
+      yield { kind: "text_delta", text: "still running" };
+      await Bun.sleep(70);
+      completed = true;
+      yield {
+        kind: "result",
+        text: "done",
+        sessionId: "session-1",
+        durationMs: 140,
+      };
+    }
+
+    const result = await streamToTelegram(
+      fake.ctx,
+      delayedEvents(),
+      "proj",
+      FULL_CAPS,
+      { inactivityWarningMs: 20 }
+    );
+
+    expect(completed).toBe(true);
+    expect(result.sessionId).toBe("session-1");
+    expect(fake.plain).toHaveLength(2);
+    expect(fake.plain[0]).toContain("Il lavoro continua");
+  });
+
+  test("zero disables stream inactivity warnings", async () => {
+    const fake = makeFakeCtx();
+    async function* delayedEvents(): AsyncGenerator<AgentEvent> {
+      await Bun.sleep(30);
+      yield { kind: "text_delta", text: "done" };
+    }
+
+    await streamToTelegram(fake.ctx, delayedEvents(), "proj", FULL_CAPS, {
+      inactivityWarningMs: 0,
+    });
+
+    expect(fake.plain).toEqual([]);
+  });
+
+  test("progress diagnostics cannot break provider iteration", async () => {
+    const fake = makeFakeCtx();
+
+    const result = await streamToTelegram(
+      fake.ctx,
+      scripted([
+        { kind: "text_delta", text: "work" },
+        {
+          kind: "result",
+          text: "done",
+          sessionId: "session-2",
+          durationMs: 1,
+        },
+      ]),
+      "proj",
+      FULL_CAPS,
+      {
+        inactivityWarningMs: 20,
+        onProgress: () => {
+          throw new Error("diagnostic unavailable");
+        },
+      }
+    );
+
+    expect(result.sessionId).toBe("session-2");
   });
 });

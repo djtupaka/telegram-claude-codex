@@ -3,6 +3,7 @@ import type { Context } from "grammy";
 import { isModelStartupUnavailableMessage } from "./agent/astra-fallback";
 import type { AgentError } from "./agent/errors";
 import { classifyOutcome } from "./agent/errors";
+import { InactivityWatch } from "./agent/inactivity-watch";
 import type { AgentEvent, ProviderCapabilities } from "./agent/types";
 import { runtime } from "./runtime";
 
@@ -123,6 +124,8 @@ export interface StreamResult {
 
 interface StreamOptions {
   branchName?: string | null;
+  inactivityWarningMs?: number;
+  onProgress?: (at: number) => void;
 }
 
 type MessageMode = "text" | "tools" | "thinking" | "none";
@@ -460,6 +463,36 @@ const dispatchEvent = async (s: StreamCtx, event: AgentEvent) => {
   return false;
 };
 
+/** Events that prove the provider is still making useful forward progress. */
+const isMeaningfulProgress = (event: AgentEvent) => {
+  switch (event.kind) {
+    case "text_delta":
+    case "thinking_delta":
+      return event.text.length > 0;
+    case "tool_use":
+    case "agent_started":
+    case "agent_done":
+    case "plan_ready":
+    case "result":
+      return true;
+    default:
+      return false;
+  }
+};
+
+const formatInactivityThreshold = (durationMs: number) => {
+  if (durationMs % 3_600_000 === 0) {
+    return `${durationMs / 3_600_000} ore`;
+  }
+  if (durationMs % 60_000 === 0) {
+    return `${durationMs / 60_000} minuti`;
+  }
+  if (durationMs % 1000 === 0) {
+    return `${durationMs / 1000} secondi`;
+  }
+  return `${durationMs} ms`;
+};
+
 /** Flush any edit that was deferred by the draft-rate throttle */
 const flushPending = async (s: StreamCtx) => {
   if (s.pendingEdit && s.mode === "text") {
@@ -507,6 +540,8 @@ export async function streamToTelegram(
     return {};
   }
   const branchName = options?.branchName;
+  const inactivityWarningMs = options?.inactivityWarningMs ?? 0;
+  const inactivityWatch = new InactivityWatch(inactivityWarningMs, Date.now());
   const s: StreamCtx = {
     ctx,
     chatId,
@@ -532,8 +567,35 @@ export async function streamToTelegram(
   }, TYPING_INTERVAL_MS);
   ctx.api.sendChatAction(chatId, "typing").catch(ignoreError);
 
+  const inactivityTimer =
+    inactivityWarningMs > 0
+      ? setInterval(
+          () => {
+            if (!inactivityWatch.poll(Date.now())) {
+              return;
+            }
+            bestEffort("inactivityWarning")(
+              ctx.api.sendMessage(
+                chatId,
+                `Nessun nuovo evento da ${formatInactivityThreshold(inactivityWarningMs)}. Il lavoro continua: non ho fermato il processo. Usa /status per controllare o /stop solo se vuoi interromperlo.`
+              )
+            );
+          },
+          Math.min(inactivityWarningMs, 30_000)
+        )
+      : undefined;
+
   try {
     for await (const event of events) {
+      if (isMeaningfulProgress(event)) {
+        const at = Date.now();
+        inactivityWatch.touch(at);
+        try {
+          options?.onProgress?.(at);
+        } catch {
+          // Progress metadata is diagnostic only and cannot break the stream.
+        }
+      }
       const stop = await dispatchEvent(s, event);
       if (stop) {
         break;
@@ -545,6 +607,9 @@ export async function streamToTelegram(
     // (consumed by handleError, not thrown), so the loop still exits here.
     clearInterval(editTimer);
     clearInterval(typingTimer);
+    if (inactivityTimer !== undefined) {
+      clearInterval(inactivityTimer);
+    }
   }
 
   await finalizeStream(s, projectName, branchName);
