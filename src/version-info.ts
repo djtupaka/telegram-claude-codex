@@ -6,10 +6,19 @@ const COMMAND_TIMEOUT_MS = 2000;
 const COMMAND_KILL_MS = 1750;
 const MAX_VERSION_CHARS = 120;
 const MAX_COMMAND_OUTPUT_CHARS = 512;
-const BEARER_SECRET = /\bbearer\s+[^\s,;]+/gi;
-const NAMED_SECRET =
-  /\b([a-z0-9_.-]*(?:api[_-]?key|token|password|secret)[a-z0-9_.-]*)(\s*(?:=|:)\s*|\s+)([^\s,;]+)/gi;
-const OPENAI_SECRET = /\bsk-[a-z0-9_-]{6,}\b/gi;
+const VERSION_TOKEN =
+  "(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)" +
+  "(?:-[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?" +
+  "(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?";
+const PACKAGE_VERSION = new RegExp(`^(${VERSION_TOKEN})$`);
+const CODEX_VERSION = new RegExp(`^codex-cli +(${VERSION_TOKEN})$`);
+const CLAUDE_VERSION = new RegExp(`^(${VERSION_TOKEN}) +\\(Claude Code\\)$`);
+const BUN_VERSION = new RegExp(`^(?:bun +)?v?(${VERSION_TOKEN})$`, "i");
+const HAPPY_VERSION = new RegExp(
+  `^(?:happy +|Happy CLI Version: +)v?(${VERSION_TOKEN})$`,
+  "i"
+);
+const FORMAT_CHARACTER = /\p{Cf}/u;
 
 interface PackageMetadata {
   dependencies?: Record<string, unknown>;
@@ -42,10 +51,28 @@ const readPackageMetadata = (path: string): PackageMetadata | undefined => {
   }
 };
 
-const stringValue = (value: unknown) =>
-  typeof value === "string" && value.trim() ? value.trim() : undefined;
+const hasUnsafeUnicode = (value: string) =>
+  Array.from(value).some((character) => {
+    const code = character.charCodeAt(0);
+    return code < 32 || (code >= 127 && code <= 159);
+  }) || FORMAT_CHARACTER.test(value);
 
-const sanitizeVersion = (value: string | undefined) => {
+const validatedPackageVersion = (value: unknown) => {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const candidate = value.trim();
+  if (
+    !candidate ||
+    candidate.length > MAX_VERSION_CHARS ||
+    hasUnsafeUnicode(candidate)
+  ) {
+    return undefined;
+  }
+  return PACKAGE_VERSION.exec(candidate)?.[1];
+};
+
+const firstLogicalLine = (value: string | undefined) => {
   if (!value) {
     return undefined;
   }
@@ -54,28 +81,39 @@ const sanitizeVersion = (value: string | undefined) => {
   const boundaries = [crAt, lfAt].filter((index) => index >= 0);
   const boundary =
     boundaries.length > 0 ? Math.min(...boundaries) : value.length;
-  const firstLine = value.slice(0, boundary);
-  const normalized = Array.from(firstLine, (character) => {
-    const code = character.charCodeAt(0);
-    return code < 32 || code === 127 ? " " : character;
-  })
-    .join("")
-    .trim();
-  const sanitized = normalized
-    .replace(BEARER_SECRET, "Bearer [redacted]")
-    .replace(
-      NAMED_SECRET,
-      (_match, name: string, separator: string) =>
-        `${name}${separator}[redacted]`
-    )
-    .replace(OPENAI_SECRET, "[redacted]")
-    .slice(0, MAX_VERSION_CHARS);
-  return sanitized || undefined;
+  const line = value.slice(0, boundary).trim();
+  if (!line || line.length > MAX_VERSION_CHARS || hasUnsafeUnicode(line)) {
+    return undefined;
+  }
+  return line;
+};
+
+const parseCommandVersion = (
+  command: "bun" | "claude" | "codex" | "happy",
+  output: string | undefined
+) => {
+  const line = firstLogicalLine(output);
+  if (!line) {
+    return undefined;
+  }
+  if (command === "codex") {
+    const version = CODEX_VERSION.exec(line)?.[1];
+    return version ? `codex-cli ${version}` : undefined;
+  }
+  if (command === "claude") {
+    const version = CLAUDE_VERSION.exec(line)?.[1];
+    return version ? `${version} (Claude Code)` : undefined;
+  }
+  if (command === "bun") {
+    return BUN_VERSION.exec(line)?.[1];
+  }
+  const version = HAPPY_VERSION.exec(line)?.[1];
+  return version ? `Happy CLI Version: ${version}` : undefined;
 };
 
 /** Read the bot version from its sole authoritative source. */
 export const readBotVersion = (path = DEFAULT_PACKAGE_PATH): string =>
-  sanitizeVersion(stringValue(readPackageMetadata(path)?.version)) ?? "unknown";
+  validatedPackageVersion(readPackageMetadata(path)?.version) ?? "unknown";
 
 /** App version stamped onto lifecycle and run events. */
 export const BOT_VERSION = readBotVersion();
@@ -180,15 +218,15 @@ export const collectRuntimeVersions = async (
   const metadata = readPackageMetadata(packagePath);
   const dependencies = metadata?.dependencies ?? {};
   const versions: RuntimeVersions = {
-    bot: sanitizeVersion(stringValue(metadata?.version)) ?? "unknown",
+    bot: validatedPackageVersion(metadata?.version) ?? "unknown",
   };
 
   const packageVersions = {
-    claudeAgentSdk: sanitizeVersion(
-      stringValue(dependencies["@anthropic-ai/claude-agent-sdk"])
+    claudeAgentSdk: validatedPackageVersion(
+      dependencies["@anthropic-ai/claude-agent-sdk"]
     ),
-    codexSdk: sanitizeVersion(stringValue(dependencies["@openai/codex-sdk"])),
-    grammy: sanitizeVersion(stringValue(dependencies.grammy)),
+    codexSdk: validatedPackageVersion(dependencies["@openai/codex-sdk"]),
+    grammy: validatedPackageVersion(dependencies.grammy),
   };
   for (const [key, value] of Object.entries(packageVersions)) {
     if (value) {
@@ -199,7 +237,7 @@ export const collectRuntimeVersions = async (
   const commands = ["codex", "claude", "bun", "happy"] as const;
   const outputs = await Promise.all(
     commands.map(async (command) =>
-      sanitizeVersion(await runBounded(runCommand, command))
+      parseCommandVersion(command, await runBounded(runCommand, command))
     )
   );
   const keys = ["codexCli", "claudeCli", "bun", "happy"] as const;

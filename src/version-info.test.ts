@@ -39,6 +39,13 @@ describe("readBotVersion", () => {
   test("package metadata failure returns unknown", () => {
     expect(readBotVersion("/missing/package.json")).toBe("unknown");
     expect(readBotVersion(tempPackage("not json"))).toBe("unknown");
+    expect(readBotVersion(tempPackage('{"version":"1.2.3-beta.1"}'))).toBe(
+      "1.2.3-beta.1"
+    );
+    expect(readBotVersion(tempPackage('{"version":"^1.2.3"}'))).toBe("unknown");
+    expect(
+      readBotVersion(tempPackage('{"version":"1.2.3\\u009bsecret"}'))
+    ).toBe("unknown");
   });
 });
 
@@ -46,9 +53,9 @@ describe("collectRuntimeVersions", () => {
   test("reads package versions and sanitizes command output", async () => {
     const packagePath = tempPackage(
       JSON.stringify({
-        version: " 0.1.0\nnot-a-version ",
+        version: "0.1.0",
         dependencies: {
-          "@anthropic-ai/claude-agent-sdk": "0.3.266\nsecret",
+          "@anthropic-ai/claude-agent-sdk": "0.3.266",
           "@openai/codex-sdk": "0.153.4",
           grammy: "1.46.0",
         },
@@ -82,7 +89,7 @@ describe("collectRuntimeVersions", () => {
     expect(JSON.stringify(versions)).not.toContain("secret stderr");
   });
 
-  test("redacts likely secrets while retaining useful version text", async () => {
+  test("omits command output containing likely secrets or unexpected content", async () => {
     const packagePath = tempPackage('{"version":"0.1.0"}');
     const versions = await collectRuntimeVersions(
       async (command) =>
@@ -91,20 +98,71 @@ describe("collectRuntimeVersions", () => {
           : "Claude 2.1.266 password:review-password",
       packagePath
     );
-    const serialized = JSON.stringify(versions);
 
-    expect(versions.codexCli).toContain("codex-cli 0.153.4");
-    expect(versions.claudeCli).toContain("Claude 2.1.266");
-    expect(serialized).not.toContain("sk-review-secret");
-    expect(serialized).not.toContain("review-secret-token");
-    expect(serialized).not.toContain("review-password");
-    expect(serialized).toContain("[redacted]");
+    expect(versions).toEqual({ bot: "0.1.0" });
   });
 
   test.each([
-    "codex 0.153.4\rsecret",
-    "codex 0.153.4\nsecret",
-    "codex 0.153.4\r\nsecret",
+    "codex-cli 0.153.4 AWS_ACCESS_KEY_ID=AKIAREVIEWSECRET",
+    "codex-cli 0.153.4 Authorization: Basic dXNlcjpwYXNz",
+    'codex-cli 0.153.4 password="quoted secret" fragment',
+    "codex-cli 0.153.4\u009bhidden",
+    "codex-cli 0.153.4\u202ehidden",
+  ])("fails closed for reviewer payload %p", async (payload) => {
+    const packagePath = tempPackage('{"version":"0.1.0"}');
+    const versions = await collectRuntimeVersions(
+      async (command) => (command === "codex" ? payload : undefined),
+      packagePath
+    );
+    expect(versions.codexCli).toBeUndefined();
+    expect(JSON.stringify(versions)).not.toContain("hidden");
+    expect(JSON.stringify(versions)).not.toContain("AKIAREVIEWSECRET");
+    expect(JSON.stringify(versions)).not.toContain("dXNlcjpwYXNz");
+  });
+
+  test("accepts and canonicalizes benign real tool outputs", async () => {
+    const packagePath = tempPackage('{"version":"0.1.0"}');
+    const versions = await collectRuntimeVersions(
+      async (command) =>
+        ({
+          codex: "codex-cli 0.153.4",
+          claude: "2.1.220 (Claude Code)",
+          bun: "1.3.14",
+          happy: "Happy CLI Version: 1.2.3",
+        })[command],
+      packagePath
+    );
+
+    expect(versions).toEqual({
+      bot: "0.1.0",
+      codexCli: "codex-cli 0.153.4",
+      claudeCli: "2.1.220 (Claude Code)",
+      bun: "1.3.14",
+      happy: "Happy CLI Version: 1.2.3",
+    });
+  });
+
+  test("omits non-version package metadata values", async () => {
+    const packagePath = tempPackage(
+      JSON.stringify({
+        version: "0.1.0",
+        dependencies: {
+          "@openai/codex-sdk": "0.153.4 AWS_ACCESS_KEY_ID=review",
+          "@anthropic-ai/claude-agent-sdk": "workspace:*",
+          grammy: "1.46.0\u009bhidden",
+        },
+      })
+    );
+
+    expect(
+      await collectRuntimeVersions(async () => undefined, packagePath)
+    ).toEqual({ bot: "0.1.0" });
+  });
+
+  test.each([
+    "codex-cli 0.153.4\rsecret",
+    "codex-cli 0.153.4\nsecret",
+    "codex-cli 0.153.4\r\nsecret",
   ])("treats CR, LF, and CRLF as logical line boundaries", async (output) => {
     const packagePath = tempPackage('{"version":"0.1.0"}');
     const versions = await collectRuntimeVersions(
@@ -112,7 +170,7 @@ describe("collectRuntimeVersions", () => {
       packagePath
     );
 
-    expect(versions.codexCli).toBe("codex 0.153.4");
+    expect(versions.codexCli).toBe("codex-cli 0.153.4");
     expect(JSON.stringify(versions)).not.toContain("secret");
   });
 
