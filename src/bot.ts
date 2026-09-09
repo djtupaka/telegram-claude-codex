@@ -49,6 +49,7 @@ import {
 } from "./observability";
 import { runtime } from "./runtime";
 import {
+  DEFAULT_PROVIDER,
   loadPersistedState,
   setActiveProject,
   setActiveProvider,
@@ -395,7 +396,7 @@ function getState(id: number): UserState {
   if (!state) {
     const persisted = loadPersistedState();
     state = {
-      activeProvider: persisted?.activeProvider ?? "claude",
+      activeProvider: persisted?.activeProvider ?? DEFAULT_PROVIDER,
       activeProject: persisted?.activeProject ?? "",
       models: persisted?.models ?? {},
       efforts: persisted?.efforts ?? {},

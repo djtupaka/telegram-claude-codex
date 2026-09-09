@@ -88,6 +88,11 @@ export function getModels(providerId: ProviderId) {
   return getProvider(providerId).models;
 }
 
+/** Get a provider's default model id (used when the user has not chosen) */
+export function getDefaultModel(providerId: ProviderId) {
+  return getProvider(providerId).defaultModel;
+}
+
 /** Get a provider's selectable reasoning-effort levels */
 export function getEffortLevels(providerId: ProviderId) {
   return getProvider(providerId).effortLevels;

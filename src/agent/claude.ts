@@ -15,6 +15,7 @@ import {
 import { userTurns } from "./claude-input";
 import { readExecutorMcpServers } from "./executor-mcp";
 import { buildFileSystemPrompt } from "./file-send";
+import { resolveEffortChoice, resolveModelChoice } from "./preferences";
 import type { AgentEvent, AgentProvider, RunOptions } from "./types";
 
 /** The raw Anthropic stream event carried by an SDK partial-assistant message. */
@@ -254,27 +255,28 @@ const buildOptions = (
   signal.addEventListener("abort", () => abortController.abort(), {
     once: true,
   });
-  // Effort overrides the boot-resolved settings for this run only; model is a
-  // plain alias/id passed straight through. "default" sentinel = no override.
-  const effort =
-    opts.effort && opts.effort !== "default"
-      ? (opts.effort as Settings["effortLevel"])
-      : undefined;
+  // Resolve both sentinels to controlled provider defaults. Effort overrides
+  // the boot-resolved settings for this run only.
+  const model = resolveModelChoice(claudeProvider, opts.model);
+  const effort = resolveEffortChoice(
+    claudeProvider,
+    opts.effort
+  ) as Settings["effortLevel"];
   const options: Options = {
     cwd: opts.projectDir,
     permissionMode: "bypassPermissions",
     allowDangerouslySkipPermissions: true,
     abortController,
     includePartialMessages: true,
-    settings: effort ? { ...settings, effortLevel: effort } : settings,
+    settings: { ...settings, effortLevel: effort },
     systemPrompt: {
       type: "preset",
       preset: "claude_code",
       append: buildFileSystemPrompt(opts.chatId),
     },
   };
-  if (opts.model && opts.model !== "default") {
-    options.model = opts.model;
+  if (model !== "default") {
+    options.model = model;
   }
   if (mcpServers) {
     options.mcpServers = mcpServers;
@@ -365,17 +367,19 @@ export const claudeProvider: AgentProvider = {
   },
   models: [
     { id: "default", label: "Default" },
-    { id: "opus", label: "Opus" },
-    { id: "sonnet", label: "Sonnet" },
-    { id: "haiku", label: "Haiku" },
-    { id: "fable", label: "Fable" },
+    { id: "claude-fable-5-1", label: "Fable 5.1 (recommended)" },
+    { id: "claude-opus-5", label: "Opus 5 (deep reasoning)" },
+    { id: "claude-sonnet-5", label: "Sonnet 5 (balanced)" },
+    { id: "claude-haiku-4-5-20251001", label: "Haiku 4.5 (fast)" },
   ],
   effortLevels: [
     { id: "low", label: "Low" },
     { id: "medium", label: "Medium" },
     { id: "high", label: "High" },
     { id: "xhigh", label: "Extra high" },
+    { id: "max", label: "Max" },
   ],
+  defaultModel: "claude-fable-5-1",
   defaultEffort: "high",
   run,
   listAllSessions,

@@ -9,7 +9,14 @@ import type { ProviderId } from "./agent/types";
 import { writeJsonAtomic } from "./atomic-write";
 import { runtime } from "./runtime";
 
-const STATE_VERSION = 1 as const;
+const STATE_VERSION = 2 as const;
+const ASTRA_MODEL = "gpt-6-astra";
+const CLAUDE_MODEL_MIGRATIONS: Readonly<Record<string, string>> = {
+  fable: "claude-fable-5-1",
+  opus: "claude-opus-5",
+  sonnet: "claude-sonnet-5",
+  haiku: "claude-haiku-4-5-20251001",
+};
 
 /** Per-provider selection map (model id or effort id, keyed by provider). */
 type ProviderChoices = Partial<Record<ProviderId, string>>;
@@ -31,7 +38,7 @@ interface BotState {
 
 const DATA_DIR = join(import.meta.dirname, "..", ".data");
 const STATE_FILE = join(DATA_DIR, "state.json");
-const DEFAULT_PROVIDER: ProviderId = "claude";
+export const DEFAULT_PROVIDER: ProviderId = "codex";
 
 /**
  * Best-effort operational event. Bridged through the runtime so it flows to the
@@ -84,7 +91,16 @@ function buildLegacySessions(parsed: unknown): LegacySessions {
 }
 
 /** Parse + normalize the persisted state, throwing only on genuine corruption. */
-function parseState(text: string) {
+export interface ParsedState {
+  activeProject: string;
+  activeProvider: ProviderId;
+  efforts: ProviderChoices;
+  legacySessions: LegacySessions;
+  models: ProviderChoices;
+  needsPersist: boolean;
+}
+
+function parseState(text: string): ParsedState {
   const parsed = JSON.parse(text) as unknown;
 
   const activeProjectRaw =
@@ -109,15 +125,32 @@ function parseState(text: string) {
     parsed && typeof parsed === "object"
       ? (parsed as Record<string, unknown>)
       : {};
+  const sourceVersion = typeof record.version === "number" ? record.version : 0;
+  const models = coerceChoices(record.models);
+  if (
+    sourceVersion < STATE_VERSION &&
+    (!models.codex ||
+      models.codex === "default" ||
+      models.codex === "gpt-5.6-sol")
+  ) {
+    models.codex = ASTRA_MODEL;
+  }
+  if (sourceVersion < STATE_VERSION && models.claude) {
+    models.claude = CLAUDE_MODEL_MIGRATIONS[models.claude] ?? models.claude;
+  }
 
   return {
     activeProvider,
     activeProject,
-    models: coerceChoices(record.models),
+    models,
     efforts: coerceChoices(record.efforts),
     legacySessions: buildLegacySessions(parsed),
+    needsPersist: sourceVersion < STATE_VERSION,
   };
 }
+
+/** Test-only access to the exact pure parser used by production state loading. */
+export const parseStateForTest = parseState;
 
 /** Keep only string-valued `claude`/`codex` keys from an untrusted choices map. */
 function coerceChoices(raw: unknown): ProviderChoices {
@@ -209,6 +242,14 @@ export function loadPersistedState() {
       errorClass: (err as Error).name,
     });
   }
+  if (loaded.needsPersist) {
+    persistState({
+      activeProvider: loaded.activeProvider,
+      activeProject: loaded.activeProject,
+      models: loaded.models,
+      efforts: loaded.efforts,
+    });
+  }
   logEvent({ event: "state.load", result: "ok" });
   return {
     activeProvider: loaded.activeProvider,
@@ -219,7 +260,7 @@ export function loadPersistedState() {
 }
 
 /** Persist active project, provider, and per-provider model/effort choices atomically. */
-function saveState(state: BotState) {
+function persistState(state: BotState) {
   mkdirSync(DATA_DIR, { recursive: true });
   const data: PersistedState = {
     version: STATE_VERSION,
@@ -231,6 +272,8 @@ function saveState(state: BotState) {
   const { bytes, durationMs } = writeJsonAtomic(STATE_FILE, data);
   logEvent({ event: "state.save", bytes, durationMs });
 }
+
+const saveState = persistState;
 
 /** Set active project and persist. */
 export function setActiveProject(state: BotState, path: string) {

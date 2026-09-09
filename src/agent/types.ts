@@ -117,8 +117,10 @@ export type AgentProvider = ProviderSpec & {
   capabilities: ProviderCapabilities;
   clearSessionCache: () => void;
   displayName: string;
-  /** Selectable models; first entry is the `"default"` sentinel (no override). */
+  /** Selectable models; first entry is the `"default"` sentinel. */
   models: Choice[];
+  /** The model id used when the user has made no selection. */
+  defaultModel: string;
   /** Selectable reasoning-effort levels (no sentinel; the default is marked via `defaultEffort`). */
   effortLevels: Choice[];
   /** The effort id used when the user has made no selection. */

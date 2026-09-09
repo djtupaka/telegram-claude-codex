@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readStateFile } from "./state";
+import { parseStateForTest, readStateFile } from "./state";
 
 let dir: string;
 let statePath: string;
@@ -45,7 +45,7 @@ describe("readStateFile", () => {
     }
   });
 
-  test("a non-existent activeProject degrades to empty, provider defaults", () => {
+  test("a non-existent activeProject and invalid provider default to Codex", () => {
     writeFileSync(
       statePath,
       JSON.stringify({ activeProject: "/no/such/dir", activeProvider: "bogus" })
@@ -54,6 +54,22 @@ describe("readStateFile", () => {
     expect(loaded.status).toBe("ok");
     if (loaded.status === "ok") {
       expect(loaded.activeProject).toBe("");
+      expect(loaded.activeProvider).toBe("codex");
+    }
+  });
+
+  test("an explicitly persisted Claude provider is preserved", () => {
+    writeFileSync(
+      statePath,
+      JSON.stringify({
+        version: 2,
+        activeProject: dir,
+        activeProvider: "claude",
+      })
+    );
+    const loaded = readStateFile(statePath);
+    expect(loaded.status).toBe("ok");
+    if (loaded.status === "ok") {
       expect(loaded.activeProvider).toBe("claude");
     }
   });
@@ -64,7 +80,7 @@ describe("readStateFile", () => {
     const loaded = readStateFile(statePath);
     expect(loaded.status).toBe("ok");
     if (loaded.status === "ok") {
-      expect(loaded.activeProvider).toBe("claude");
+      expect(loaded.activeProvider).toBe("codex");
       expect(loaded.legacySessions.claude.get("/p")).toBe("c-1");
       expect(loaded.legacySessions.codex.size).toBe(0);
     }
@@ -83,8 +99,8 @@ describe("readStateFile", () => {
     const loaded = readStateFile(statePath);
     expect(loaded.status).toBe("ok");
     if (loaded.status === "ok") {
-      expect(loaded.models.claude).toBe("opus");
-      expect(loaded.models.codex).toBeUndefined(); // non-string dropped
+      expect(loaded.models.claude).toBe("claude-opus-5");
+      expect(loaded.models.codex).toBe("gpt-6-astra");
       expect(loaded.efforts.codex).toBe("high");
       expect(loaded.efforts.claude).toBeUndefined();
     }
@@ -98,7 +114,7 @@ describe("readStateFile", () => {
     const loaded = readStateFile(statePath);
     expect(loaded.status).toBe("ok");
     if (loaded.status === "ok") {
-      expect(loaded.models).toEqual({});
+      expect(loaded.models).toEqual({ codex: "gpt-6-astra" });
       expect(loaded.efforts).toEqual({});
     }
   });
@@ -121,5 +137,105 @@ describe("readStateFile", () => {
     const files = readdirSync(dir);
     expect(files.some((f) => f.startsWith("state.json.corrupt-"))).toBe(true);
     expect(files).not.toContain("state.json");
+  });
+});
+
+describe("state version migration", () => {
+  test("a fresh state payload defaults to Codex and Astra", () => {
+    const parsed = parseStateForTest("{}");
+    expect(parsed.activeProvider).toBe("codex");
+    expect(parsed.models.codex).toBe("gpt-6-astra");
+  });
+
+  test("version-1 Sol choice migrates once to Astra", () => {
+    const parsed = parseStateForTest(
+      JSON.stringify({
+        version: 1,
+        activeProvider: "codex",
+        activeProject: "",
+        models: { codex: "gpt-5.6-sol" },
+      })
+    );
+    expect(parsed.models.codex).toBe("gpt-6-astra");
+    expect(parsed.needsPersist).toBe(true);
+  });
+
+  test("version-2 explicit Sol choice is preserved", () => {
+    const parsed = parseStateForTest(
+      JSON.stringify({
+        version: 2,
+        activeProvider: "codex",
+        activeProject: "",
+        models: { codex: "gpt-5.6-sol" },
+      })
+    );
+    expect(parsed.models.codex).toBe("gpt-5.6-sol");
+  });
+
+  test.each([
+    undefined,
+    "default",
+  ])("version-1 Codex choice %p migrates to Astra", (codexModel) => {
+    const parsed = parseStateForTest(
+      JSON.stringify({
+        version: 1,
+        activeProvider: "codex",
+        activeProject: "",
+        models: codexModel === undefined ? {} : { codex: codexModel },
+      })
+    );
+    expect(parsed.models.codex).toBe("gpt-6-astra");
+    expect(parsed.needsPersist).toBe(true);
+  });
+
+  test.each([
+    "gpt-5.6-terra",
+    "gpt-5.6-luna",
+  ])("version-1 explicit Codex choice %s is preserved", (codexModel) => {
+    const parsed = parseStateForTest(
+      JSON.stringify({
+        version: 1,
+        activeProvider: "codex",
+        activeProject: "",
+        models: { codex: codexModel },
+      })
+    );
+    expect(parsed.models.codex).toBe(codexModel);
+    expect(parsed.needsPersist).toBe(true);
+  });
+
+  test.each([
+    ["fable", "claude-fable-5-1"],
+    ["opus", "claude-opus-5"],
+    ["sonnet", "claude-sonnet-5"],
+    ["haiku", "claude-haiku-4-5-20251001"],
+  ])("version-1 Claude alias %s migrates to %s", (legacy, current) => {
+    const parsed = parseStateForTest(
+      JSON.stringify({
+        version: 1,
+        activeProvider: "claude",
+        activeProject: "",
+        models: { claude: legacy },
+      })
+    );
+    expect(parsed.models.claude).toBe(current);
+    expect(parsed.activeProvider).toBe("claude");
+    expect(parsed.needsPersist).toBe(true);
+  });
+
+  test.each([
+    "default",
+    "claude-fable-5-1",
+    "claude-opus-5",
+  ])("version-1 current Claude choice %s is preserved", (model) => {
+    const parsed = parseStateForTest(
+      JSON.stringify({
+        version: 1,
+        activeProvider: "claude",
+        activeProject: "",
+        models: { claude: model },
+      })
+    );
+    expect(parsed.models.claude).toBe(model);
   });
 });

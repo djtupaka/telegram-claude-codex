@@ -23,6 +23,7 @@ import {
   toCodexMcpServers,
 } from "./executor-mcp";
 import { buildFileSystemPrompt } from "./file-send";
+import { resolveEffortChoice, resolveModelChoice } from "./preferences";
 import type { AgentEvent, AgentProvider, RunOptions } from "./types";
 
 const ZSH_WRAPPER = /^\/bin\/\w+ -lc /;
@@ -263,11 +264,11 @@ const threadOptions = (opts: RunOptions): ThreadOptions => ({
   sandboxMode: "danger-full-access",
   approvalPolicy: "never",
   skipGitRepoCheck: true,
-  // "default" sentinel = leave the Codex default in place.
-  ...(opts.model && opts.model !== "default" ? { model: opts.model } : {}),
-  ...(opts.effort && opts.effort !== "default"
-    ? { modelReasoningEffort: opts.effort as ModelReasoningEffort }
-    : {}),
+  model: resolveModelChoice(codexProvider, opts.model),
+  modelReasoningEffort: resolveEffortChoice(
+    codexProvider,
+    opts.effort
+  ) as ModelReasoningEffort,
 });
 
 /**
@@ -350,17 +351,19 @@ export const codexProvider: AgentProvider = {
   },
   models: [
     { id: "default", label: "Default" },
+    { id: "gpt-6-astra", label: "Astra" },
     { id: "gpt-5.6-sol", label: "Sol (flagship)" },
     { id: "gpt-5.6-terra", label: "Terra (balanced)" },
     { id: "gpt-5.6-luna", label: "Luna (fast)" },
   ],
   effortLevels: [
-    { id: "minimal", label: "Minimal" },
     { id: "low", label: "Low" },
     { id: "medium", label: "Medium" },
     { id: "high", label: "High" },
     { id: "xhigh", label: "Extra high" },
+    { id: "max", label: "Max" },
   ],
+  defaultModel: "gpt-6-astra",
   defaultEffort: "medium",
   run,
   listAllSessions,
