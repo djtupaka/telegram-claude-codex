@@ -35,7 +35,7 @@ The same bot can also live in one Telegram supergroup with **Topics** enabled (a
 - inside a topic all the usual commands apply (`/new`, `/stop`, `/status`, `/provider`, `/model`, `/history`, ...)
 - the group's *General* area only accepts `/nuova`, `/elenco`, `/start`, `/help`
 
-Seed the initial topics: `bun run scripts/topics-seed.ts <chatId> premelone:codex premelone:claude nodarr:codex nodarr:claude laura:claude it_home:claude:Infrastruttura`
+Seed the initial topics: `bun run scripts/topics-seed.ts <chatId> premelone:codex premelone:claude nodarr:codex nodarr:claude laura:claude homeassistant:claude coolify-setup:claude truenas:claude` (topic names use short provider tags: CC = Claude Code, CX = Codex)
 
 ## Prerequisites
 

@@ -45,13 +45,12 @@ describe("topic naming", () => {
     expect(projectLabel("premelone")).toBe("PremelOne");
     expect(projectLabel("it_home")).toBe("Infrastruttura");
     expect(projectLabel("vibravid")).toBe("Vibravid");
+    expect(projectLabel("truenas")).toBe("TrueNAS");
+    expect(projectLabel("homeassistant")).toBe("Home Assistant");
   });
   test("display name combines project and provider, custom name wins", () => {
-    expect(topicDisplayName("nodarr", "claude").startsWith("Nodarr · ")).toBe(
-      true
-    );
-    expect(
-      topicDisplayName("it_home", "claude", "Infra").startsWith("Infra · ")
-    ).toBe(true);
+    expect(topicDisplayName("nodarr", "claude")).toBe("Nodarr · CC");
+    expect(topicDisplayName("premelone", "codex")).toBe("PremelOne · CX");
+    expect(topicDisplayName("it_home", "claude", "Infra")).toBe("Infra · CC");
   });
 });

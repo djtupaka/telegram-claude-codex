@@ -14,7 +14,19 @@ const PROJECT_LABELS: Readonly<Record<string, string>> = {
   it_home: "Infrastruttura",
   "dev-bot": "Dev-bot",
   tdarr: "Tdarr",
+  homeassistant: "Home Assistant",
+  "coolify-setup": "Coolify",
+  truenas: "TrueNAS",
 };
+
+/** Short provider tags used in topic names (Nicolas: CC = Claude Code, CX = Codex). */
+const PROVIDER_SHORT: Readonly<Record<ProviderId, string>> = {
+  claude: "CC",
+  codex: "CX",
+};
+
+export const providerShort = (provider: ProviderId) =>
+  PROVIDER_SHORT[provider] ?? getProvider(provider).displayName;
 
 export const projectLabel = (name: string) =>
   PROJECT_LABELS[name] ?? name.charAt(0).toUpperCase() + name.slice(1);
@@ -24,9 +36,8 @@ export const topicDisplayName = (
   provider: ProviderId,
   customName?: string
 ) => {
-  const providerName = getProvider(provider).displayName;
   const base = customName?.trim() || projectLabel(projectName);
-  return `${base} · ${providerName}`;
+  return `${base} · ${providerShort(provider)}`;
 };
 
 export interface CreateTopicInput {
