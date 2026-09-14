@@ -69,3 +69,15 @@ Backup con ripristino e confronto byte per byte di state/topics/sessions/operati
 `/home/djtupaka/projects/dev-bot/.data/backups/dev-menu-20260914T101701Z.tar.gz`.
 SHA-256 `0f11315bcd81b0e86b7f402b11cfa9f8392835fda726027c8af973ba6924d64d`.
 La precedente attivazione `2cc7404` ha ricevuta `success`. La nuova attivazione usa il riavvio differito e produce la propria ricevuta per commit in `.data/releases`.
+
+## Aggiornamento: interfaccia italiana
+
+Base `41cd8c81cfb85fbd856b6295e9bdcaa5c0dc077b`, attivazione precedente confermata dalla ricevuta `success`. Verificato con `getMyCommands` che i quattro ambiti registrati in Telegram contenevano ancora descrizioni inglesi; nessun elenco specifico `it` o `en` presente negli stessi ambiti. Tradotte tutte le descrizioni slash e le schermate richiamate dai menu, inclusi tastiera privata, guida, impostazioni, coda, composizione, cronologia e metadati. Nomi slash, callback, identificativi dei modelli, enum e prompt interni conservati. I messaggi originali prodotti dagli strumenti esterni conservano la lingua originale.
+
+Harness isolato esteso al routing delle dieci etichette italiane e inglesi della tastiera: nessuna viene inviata come prompt all'AI. Review indipendente senza bloccanti; uniformati anche “ramo Git”, “richieste di modifica” e “argomento”.
+
+Backup ripristinato e confrontato byte per byte:
+`/home/djtupaka/projects/dev-bot/.data/backups/italian-ui-20260914T102633Z.tar.gz`.
+SHA-256 `64e07ea3738810e8a459ad37a0a06cbb3608610f8b6383998c32217228b2ab4a`.
+
+Verifica finale: `bun test` **274 pass, 0 fail**, 790 assertion, 41 file; typecheck e diff-check superati, lint senza errori con i due avvisi di complessità preesistenti. Nessun messaggio di prova o argomento creato su Telegram. Attivazione del codice tramite riavvio differito e ricevuta per commit; l'elenco slash può essere aggiornato e riletto separatamente senza interrompere le esecuzioni.

@@ -14,4 +14,4 @@ export const formatActiveRunTiming = (
   run: ActiveRunSnapshot,
   now = Date.now()
 ) =>
-  `Yes (${run.provider}, ${formatDuration(now - run.startedAt)})\nLast progress: ${formatDuration(now - run.lastProgressAt)} ago`;
+  `Sì (${run.provider === "claude" ? "Claude Code" : "Codex"}, ${formatDuration(now - run.startedAt)})\nUltimo aggiornamento: ${formatDuration(now - run.lastProgressAt)} fa`;

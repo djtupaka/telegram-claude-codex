@@ -128,7 +128,7 @@ describe("classifyOutcome — every AgentError tag (adversarial)", () => {
     for (const reason of ["stopped", "switched", "new_prompt"] as const) {
       expect(classifyOutcome(new AgentInterrupted({ reason }))).toEqual({
         outcome: "interrupted",
-        copy: "Stopped.",
+        copy: "Esecuzione interrotta.",
       });
     }
   });
@@ -136,14 +136,14 @@ describe("classifyOutcome — every AgentError tag (adversarial)", () => {
   test("timeout maps to interrupted", () => {
     expect(classifyOutcome(new AgentTimedOut({}))).toEqual({
       outcome: "interrupted",
-      copy: "Timed out.",
+      copy: "Tempo massimo di esecuzione superato.",
     });
   });
 
   test("at_capacity", () => {
     expect(classifyOutcome(new AtCapacity({}))).toEqual({
       outcome: "at_capacity",
-      copy: "Busy, try again shortly.",
+      copy: "Tutti gli agenti sono occupati. Riprova tra poco.",
     });
   });
 
@@ -154,10 +154,10 @@ describe("classifyOutcome — every AgentError tag (adversarial)", () => {
     // Empty/whitespace stderr falls back to the exit-code sentence.
     expect(
       classifyOutcome(new ProcessFailed({ code: -1, stderr: "" })).copy
-    ).toBe("Process failed (exit -1).");
+    ).toBe("Processo terminato con errore (codice -1).");
     expect(
       classifyOutcome(new ProcessFailed({ code: 0, stderr: "\t  \n" })).copy
-    ).toBe("Process failed (exit 0).");
+    ).toBe("Processo terminato con errore (codice 0).");
   });
 
   test("provider crashed passes message through verbatim (incl. multiline)", () => {
@@ -278,7 +278,7 @@ describe("RunRegistry — subprocess lifecycle (fake sh provider)", () => {
       expect(terminal.kind).toBe("error");
       if (terminal.kind === "error") {
         expect(terminal.class?._tag).toBe("AgentTimedOut");
-        expect(terminal.message).toBe("Timed out.");
+        expect(terminal.message).toBe("Tempo massimo di esecuzione superato.");
       }
 
       expect(
@@ -344,7 +344,7 @@ describe("RunRegistry — subprocess lifecycle (fake sh provider)", () => {
       expect(terminal.kind).toBe("error");
       if (terminal.kind === "error") {
         expect(terminal.class?._tag).toBe("AgentInterrupted");
-        expect(terminal.message).toBe("Stopped.");
+        expect(terminal.message).toBe("Esecuzione interrotta.");
       }
       expect(
         await waitUntil(
@@ -442,7 +442,9 @@ describe("RunRegistry — subprocess lifecycle (fake sh provider)", () => {
       expect(terminal.kind).toBe("error");
       if (terminal.kind === "error") {
         expect(terminal.class?._tag).toBe("AtCapacity");
-        expect(terminal.message).toBe("Busy, try again shortly.");
+        expect(terminal.message).toBe(
+          "Tutti gli agenti sono occupati. Riprova tra poco."
+        );
       }
       // The incumbent run was untouched by the capacity rejection.
       expect(await rt.runPromise(hasRun("3001"))).toBe(true);

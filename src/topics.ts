@@ -66,7 +66,7 @@ export async function createTopicSession(
 ): Promise<CreatedTopic> {
   const projectDir = join(input.projectsDir, input.projectName);
   if (!statSync(projectDir).isDirectory()) {
-    throw new Error(`Project directory not found: ${projectDir}`);
+    throw new Error(`Cartella del progetto non trovata: ${projectDir}`);
   }
   getProvider(input.provider); // throws on unknown provider
   const name = topicDisplayName(

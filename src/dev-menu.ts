@@ -118,8 +118,8 @@ export function buildDevMenu(context: MenuContext): MenuView {
   }
   const text = [
     `DEV · ${context.project ?? "Sessione"}`,
-    `${context.provider ?? "Agente"} · ${context.model ?? "predefinito"}`,
-    `Impegno: ${context.effort ?? "predefinito"}`,
+    `${context.provider ?? "Assistente"} · ${context.model ?? "predefinito"}`,
+    `Ragionamento: ${context.effort ?? "predefinito"}`,
     `Stato: ${context.running ? "in esecuzione" : "libero"} · messaggi in coda: ${context.queued ?? 0}`,
     "",
     "I pulsanti agiscono su questa conversazione.",
@@ -233,12 +233,12 @@ function buildMenuSubpage(
   }
   if (data === "menu:settings") {
     return {
-      text: `Impostazioni · ${context.project ?? "questa conversazione"}\nScegli cosa cambiare. Il cambio agente interrompe il lavoro attivo.`,
+      text: `Impostazioni · ${context.project ?? "questa conversazione"}\nScegli cosa cambiare. Il cambio assistente interrompe il lavoro attivo.`,
       keyboard: new InlineKeyboard()
-        .text("Agente", "menu:run:provider")
+        .text("Assistente", "menu:run:provider")
         .text("Modello", "menu:run:model")
         .row()
-        .text("Impegno", "menu:run:effort")
+        .text("Ragionamento", "menu:run:effort")
         .text("Permessi", "menu:permissions")
         .row()
         .text("↩ Menu", "menu:home"),

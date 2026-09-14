@@ -64,18 +64,26 @@ export const runOutcomeOf = (
 export const classifyOutcome = (e: AgentError) => {
   switch (e._tag) {
     case "AgentInterrupted":
-      return { outcome: "interrupted", copy: "Stopped." } as const;
+      return {
+        outcome: "interrupted",
+        copy: "Esecuzione interrotta.",
+      } as const;
     case "AgentTimedOut":
-      return { outcome: "interrupted", copy: "Timed out." } as const;
+      return {
+        outcome: "interrupted",
+        copy: "Tempo massimo di esecuzione superato.",
+      } as const;
     case "AtCapacity":
       return {
         outcome: "at_capacity",
-        copy: "Busy, try again shortly.",
+        copy: "Tutti gli agenti sono occupati. Riprova tra poco.",
       } as const;
     case "ProcessFailed":
       return {
         outcome: "errored",
-        copy: e.stderr.trim() || `Process failed (exit ${e.code}).`,
+        copy:
+          e.stderr.trim() ||
+          `Processo terminato con errore (codice ${e.code}).`,
       } as const;
     case "ProviderCrashed":
       return { outcome: "errored", copy: e.message } as const;

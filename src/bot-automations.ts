@@ -116,7 +116,7 @@ export function installAutomations(options: InstallAutomationsOptions) {
       const input = parseProgramCommand(text);
       const job = store.add({ ...target, ...input });
       await ctx.reply(
-        `Programma creato: ${job.id}\nProssima esecuzione: ${job.nextRunAt}\nProgetto: ${job.project}\nProvider: ${job.provider}`
+        `Programma creato: ${job.id}\nProssima esecuzione: ${job.nextRunAt}\nProgetto: ${job.project}\nAssistente: ${job.provider}`
       );
     })
   );
@@ -125,7 +125,7 @@ export function installAutomations(options: InstallAutomationsOptions) {
     guarded(async (ctx, target) => {
       const jobs = store.list(target.scopeKey);
       if (!jobs.length) {
-        await ctx.reply("Nessun programma in questo topic.");
+        await ctx.reply("Nessun programma in questo argomento.");
         return;
       }
       for (const job of jobs) {
@@ -138,7 +138,7 @@ export function installAutomations(options: InstallAutomationsOptions) {
             }[job.lastResult]
           : "in attesa";
         await ctx.reply(
-          `${job.id}\n${job.prompt.slice(0, 500)}\n${job.completed ? "Concluso" : `Prossima esecuzione: ${job.nextRunAt}`}\nStato: ${status}\nProgetto: ${job.project}\nProvider: ${job.provider}${job.lastError ? "\nErrore: esecuzione non riuscita." : ""}`
+          `${job.id}\n${job.prompt.slice(0, 500)}\n${job.completed ? "Concluso" : `Prossima esecuzione: ${job.nextRunAt}`}\nStato: ${status}\nProgetto: ${job.project}\nAssistente: ${job.provider}${job.lastError ? "\nErrore: esecuzione non riuscita." : ""}`
         );
       }
     })
@@ -152,7 +152,7 @@ export function installAutomations(options: InstallAutomationsOptions) {
       await ctx.reply(
         store.cancel(target.scopeKey, text)
           ? "Programma annullato."
-          : "Programma non trovato in questo topic."
+          : "Programma non trovato in questo argomento."
       );
     })
   );
@@ -166,7 +166,9 @@ export function installAutomations(options: InstallAutomationsOptions) {
       const source = match[1] as EventSource;
       if (match[2] === "off") {
         store.unsubscribe(target.scopeKey, source);
-        await ctx.reply(`Notifiche ${source} disattivate per questo topic.`);
+        await ctx.reply(
+          `Notifiche ${source} disattivate per questo argomento.`
+        );
         return;
       }
       if (match[2] === "on") {
@@ -207,7 +209,7 @@ export function installAutomations(options: InstallAutomationsOptions) {
             } catch (error) {
               await send(
                 target,
-                "La prima diagnosi non è riuscita. Richiedi una verifica manuale nel topic."
+                "La prima diagnosi non è riuscita. Richiedi una verifica manuale nell’argomento."
               );
               throw error;
             }

@@ -9,30 +9,30 @@ import {
 } from "./errors";
 
 describe("classifyOutcome", () => {
-  test("interrupt -> Stopped.", () => {
+  test("interrupt -> Esecuzione interrotta.", () => {
     expect(
       classifyOutcome(new AgentInterrupted({ reason: "stopped" }))
     ).toEqual({
       outcome: "interrupted",
-      copy: "Stopped.",
+      copy: "Esecuzione interrotta.",
     });
     expect(
       classifyOutcome(new AgentInterrupted({ reason: "switched" })).copy
-    ).toBe("Stopped.");
+    ).toBe("Esecuzione interrotta.");
     expect(
       classifyOutcome(new AgentInterrupted({ reason: "new_prompt" })).copy
-    ).toBe("Stopped.");
+    ).toBe("Esecuzione interrotta.");
   });
-  test("timeout -> interrupted/Timed out.", () => {
+  test("timeout -> interrupted/Tempo massimo di esecuzione superato.", () => {
     expect(classifyOutcome(new AgentTimedOut({}))).toEqual({
       outcome: "interrupted",
-      copy: "Timed out.",
+      copy: "Tempo massimo di esecuzione superato.",
     });
   });
   test("at_capacity", () => {
     expect(classifyOutcome(new AtCapacity({}))).toEqual({
       outcome: "at_capacity",
-      copy: "Busy, try again shortly.",
+      copy: "Tutti gli agenti sono occupati. Riprova tra poco.",
     });
   });
   test("process failed uses stderr, falls back to exit code", () => {
@@ -44,7 +44,7 @@ describe("classifyOutcome", () => {
     });
     expect(
       classifyOutcome(new ProcessFailed({ code: 2, stderr: "   " })).copy
-    ).toBe("Process failed (exit 2).");
+    ).toBe("Processo terminato con errore (codice 2).");
   });
   test("provider crashed uses message", () => {
     expect(

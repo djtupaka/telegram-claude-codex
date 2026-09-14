@@ -106,7 +106,7 @@ describe("streamToTelegram", () => {
       },
     ]);
     const all = [...rich.map(bodyOf), ...plain].join("\n");
-    expect(all).toContain("Stopped.");
+    expect(all).toContain("Esecuzione interrotta.");
     expect(all).not.toContain("143");
     expect(result.errorClass?._tag).toBe("AgentInterrupted");
   });

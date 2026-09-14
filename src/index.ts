@@ -98,14 +98,23 @@ bot.start({
         command: "menu",
         description: "Menu interattivo: progetti, attività e impostazioni",
       },
-      { command: "projects", description: "Switch active project" },
-      { command: "provider", description: "Switch coding agent provider" },
-      { command: "model", description: "Switch model for active provider" },
-      { command: "effort", description: "Switch reasoning effort" },
-      { command: "history", description: "Resume a past session" },
-      { command: "new", description: "Start fresh conversation" },
-      { command: "stop", description: "Kill active process" },
-      { command: "status", description: "Show current state" },
+      {
+        command: "projects",
+        description: "Scegli il progetto su cui lavorare",
+      },
+      { command: "provider", description: "Scegli tra Claude e Codex" },
+      { command: "model", description: "Scegli il modello AI" },
+      { command: "effort", description: "Imposta il livello di ragionamento" },
+      {
+        command: "history",
+        description: "Riprendi una conversazione precedente",
+      },
+      { command: "new", description: "Inizia una nuova conversazione" },
+      { command: "stop", description: "Interrompi il lavoro in corso" },
+      {
+        command: "status",
+        description: "Mostra progetto, impostazioni e attività",
+      },
       {
         command: "permessi",
         description: "Approva ogni strumento o esegui automaticamente",
@@ -116,12 +125,15 @@ bot.start({
       { command: "programmi", description: "Elenco lavori programmati" },
       { command: "annulla_programma", description: "Annulla un programma" },
       { command: "eventi", description: "Collega le notifiche dei servizi" },
-      { command: "branch", description: "Show current git branch" },
-      { command: "pr", description: "List open pull requests" },
-      { command: "help", description: "Show available commands" },
-      { command: "compose", description: "Start collecting messages" },
-      { command: "send", description: "Send composed messages" },
-      { command: "cancel", description: "Cancel compose mode" },
+      { command: "branch", description: "Mostra il ramo Git corrente" },
+      { command: "pr", description: "Elenca le richieste di modifica aperte" },
+      { command: "help", description: "Guida ai comandi disponibili" },
+      {
+        command: "compose",
+        description: "Raccogli più messaggi da inviare insieme",
+      },
+      { command: "send", description: "Invia i messaggi raccolti" },
+      { command: "cancel", description: "Annulla la raccolta dei messaggi" },
       {
         command: "nuova",
         description: "Gruppo: scegli un progetto e apri un argomento",
@@ -131,7 +143,10 @@ bot.start({
         description: "Gruppo: crea una cartella progetto su Ubuntu",
       },
       { command: "chiudi", description: "Gruppo: archivia questo argomento" },
-      { command: "elenco", description: "Gruppo: elenco sessioni" },
+      {
+        command: "elenco",
+        description: "Gruppo: mostra gli argomenti dei progetti",
+      },
     ];
     const scopes = [
       { type: "default" as const },
@@ -153,7 +168,7 @@ bot.start({
     bot.api
       .sendMessage(
         userId,
-        `Bot started at ${new Date().toLocaleString()}\nProvider: ${providerName}\nRevisione: ${revision}`
+        `Bot avviato il ${new Date().toLocaleString("it-IT", { timeZone: "Europe/Rome" })}\nAssistente: ${providerName}\nRevisione: ${revision}`
       )
       .catch((e) => console.error("Failed to send startup message:", e));
   },

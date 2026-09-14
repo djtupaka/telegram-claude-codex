@@ -183,7 +183,7 @@ const startDraft = (s: StreamCtx) => {
 /** Send the "Thinking..." placeholder draft for the current draft slot */
 const sendThinkingPlaceholder = (s: StreamCtx) =>
   safeSendRichDraft(s.ctx, s.chatId, s.currentDraftId, {
-    html: "<i>Thinking...</i>",
+    html: "<i>Sto ragionando…</i>",
   });
 
 /** Stream the accumulated model text, persisting overflow chunks as they exceed the limit */
@@ -342,7 +342,7 @@ const handleAgentStarted = async (
     await switchMode(s, "tools");
     startDraft(s);
   }
-  s.toolLines.push(`⏳ Agent: ${event.description}`);
+  s.toolLines.push(`⏳ Agente: ${event.description}`);
   await flushTools(s).catch(ignoreError);
 };
 
@@ -353,10 +353,12 @@ const agentDoneParts = (event: EventOf<"agent_done">) => {
     parts.push(`${(event.durationMs / 1000).toFixed(1)}s`);
   }
   if (event.totalTokens !== undefined) {
-    parts.push(`${(event.totalTokens / 1000).toFixed(1)}k tokens`);
+    parts.push(`${(event.totalTokens / 1000).toFixed(1)}k token`);
   }
   if (event.toolUses !== undefined) {
-    parts.push(`${event.toolUses} tool call${event.toolUses !== 1 ? "s" : ""}`);
+    parts.push(
+      `${event.toolUses} ${event.toolUses === 1 ? "chiamata agli strumenti" : "chiamate agli strumenti"}`
+    );
   }
   return parts;
 };
@@ -370,7 +372,7 @@ const handleAgentDone = async (s: StreamCtx, event: EventOf<"agent_done">) => {
   const icon = event.status === "completed" ? "✅" : "❌";
   const parts = agentDoneParts(event);
   const suffix = parts.length > 0 ? ` (${parts.join(", ")})` : "";
-  const line = `${icon} Agent: ${event.description}${suffix}`;
+  const line = `${icon} Agente: ${event.description}${suffix}`;
   await safeSendRichMessage(
     s.ctx,
     s.chatId,
@@ -626,25 +628,25 @@ function formatFooter(
   const meta: string[] = [];
   if (projectName) {
     meta.push(
-      `Project: ${branchName ? `${projectName} [${branchName}]` : projectName}`
+      `Progetto: ${branchName ? `${projectName} [${branchName}]` : projectName}`
     );
   }
   if (capabilities.cost && result.cost !== undefined) {
-    meta.push(`Cost: $${result.cost.toFixed(4)}`);
+    meta.push(`Costo: $${result.cost.toFixed(4)}`);
   }
   if (result.durationMs !== undefined) {
     const secs = (result.durationMs / 1000).toFixed(1);
-    meta.push(`Time: ${secs}s`);
+    meta.push(`Durata: ${secs}s`);
   }
   if (result.totalTokens !== undefined) {
-    meta.push(`${(result.totalTokens / 1000).toFixed(1)}k tokens`);
+    meta.push(`${(result.totalTokens / 1000).toFixed(1)}k token`);
   }
   const turnsMeaningful =
     result.turns !== undefined &&
     result.turns > 1 &&
     (capabilities.cost || result.turns > 0);
   if (turnsMeaningful) {
-    meta.push(`Turns: ${result.turns}`);
+    meta.push(`Turni: ${result.turns}`);
   }
   if (meta.length === 0) {
     return "";

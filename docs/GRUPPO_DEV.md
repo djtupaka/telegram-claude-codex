@@ -84,3 +84,9 @@ Seguire [INSTALLAZIONE_IT.md](INSTALLAZIONE_IT.md). L'amico usa il proprio serve
 ## Verifica e attivazione
 
 I test usano provider e Telegram simulati, directory temporanee e nessuna modifica ai progetti operativi. Il test d'integrazione esercita i veri handler del bot in un sottoprocesso isolato senza rete. Prima dell'attivazione: suite completa, typecheck, lint e diff-check; backup dello stato. Il bot è un servizio systemd, non una risorsa Coolify. Non riavviare mentre esistono esecuzioni attive: anche l'agente che prepara l'aggiornamento è un processo figlio del bot. Il messaggio di avvio mostra la revisione Git caricata.
+
+## Lingua dei comandi e dei menu
+
+Le descrizioni dell'elenco che Telegram mostra digitando `/` sono in italiano, sia in privato sia nei gruppi. I nomi dei comandi restano invariati per conservare le scorciatoie esistenti. Anche i pulsanti, la guida, le impostazioni e i messaggi di servizio usano l'italiano; i nomi dei prodotti e gli identificativi dei modelli restano quelli originali. I vecchi pulsanti in inglese già presenti nella chat continuano a essere riconosciuti.
+
+Per aprire la navigazione usa `/menu`; per consultare tutti i comandi usa `/help`. I messaggi già inviati rimangono nella cronologia con il testo originale.

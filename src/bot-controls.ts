@@ -1,5 +1,6 @@
 import { basename } from "node:path";
 import type { Bot, Context } from "grammy";
+import { getProvider } from "./agent/registry";
 import type { ProviderId } from "./agent/types";
 import { ApprovalBroker } from "./approvals";
 import { menuShortcut } from "./dev-menu";
@@ -65,11 +66,18 @@ export function installBotControls(options: {
       .catch(() => undefined)
       .then(async () => {
         const settings = store.getSettings(target.scopeKey);
+        const provider = getProvider(target.provider);
+        const modelLabel =
+          provider.models.find((model) => model.id === target.model)?.label ??
+          target.model;
+        const effortLabel =
+          provider.effortLevels.find((effort) => effort.id === target.effort)
+            ?.label ?? target.effort;
         const text = [
           `Progetto: ${basename(target.project)}`,
-          `Branch: ${target.branch ?? "non disponibile"}`,
-          `Provider: ${target.provider} · Modello: ${target.model}`,
-          `Impegno: ${target.effort}`,
+          `Ramo Git: ${target.branch ?? "non disponibile"}`,
+          `Assistente: ${provider.displayName} · Modello: ${modelLabel}`,
+          `Ragionamento: ${effortLabel}`,
           `Permessi: ${settings.approvalPolicy === "ask" ? "chiedi per ogni strumento (Claude)" : "automatici"}`,
           `Stato: ${status}`,
         ].join("\n");

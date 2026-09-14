@@ -12,5 +12,5 @@ test("formats elapsed runtime and last-progress age without inferring failure", 
       },
       42 * 60 * 1000 + 10_000
     )
-  ).toBe("Yes (codex, 42m 10s)\nLast progress: 3m 08s ago");
+  ).toBe("Sì (Codex, 42m 10s)\nUltimo aggiornamento: 3m 08s fa");
 });

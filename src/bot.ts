@@ -323,9 +323,9 @@ const requireChat = (ctx: Context) => {
 /** Human-readable label for the active project (general / basename / none) */
 const describeProject = (activeProject: string, projectsDir: string) => {
   if (!activeProject) {
-    return "(none)";
+    return "(nessuno)";
   }
-  return activeProject === projectsDir ? "general" : basename(activeProject);
+  return activeProject === projectsDir ? "Generale" : basename(activeProject);
 };
 
 type ForwardOrigin = NonNullable<
@@ -390,13 +390,13 @@ const WHITESPACE_RE = /\s+/;
 const mainKeyboard = new Keyboard()
   .text("☰ Menu")
   .row()
-  .text("Projects")
-  .text("History")
+  .text("Progetti")
+  .text("Cronologia")
   .row()
-  .text("Stop")
-  .text("New")
+  .text("Interrompi")
+  .text("Nuova sessione")
   .row()
-  .text("Compose")
+  .text("Componi")
   .row()
   .resized()
   .persistent();
@@ -579,7 +579,7 @@ export function createBot(
       console.log(
         `Auth rejected: from=${ctx.from.id} allowed=${allowedUserId}`
       );
-      await ctx.reply("Telegram User is Unauthorized.");
+      await ctx.reply("Utente Telegram non autorizzato.");
       return;
     }
     await next();
@@ -688,7 +688,10 @@ export function createBot(
         project: basename(target.project),
         provider: activeProviderName(state),
         model: target.model,
-        effort: target.effort,
+        effort:
+          getEffortLevels(state.activeProvider).find(
+            (choice) => choice.id === target.effort
+          )?.label ?? target.effort,
         running: busy(state.runKey),
         queued: state.queue.length,
         approvalPolicy: controls.store.getSettings(scope.key).approvalPolicy,
@@ -872,6 +875,12 @@ export function createBot(
   });
 
   const buttonToCommand: Record<string, string> = {
+    Progetti: "/projects",
+    Cronologia: "/history",
+    Interrompi: "/stop",
+    "Nuova sessione": "/new",
+    Componi: "/compose",
+    // Keep routing keyboards already displayed before the Italian labels.
     Projects: "/projects",
     History: "/history",
     Stop: "/stop",
@@ -915,9 +924,9 @@ export function createBot(
       return;
     }
     const state = getState(scope);
-    const project = state.activeProject || "(none)";
+    const project = state.activeProject || "(nessuno)";
     await ctx.reply(
-      `Coding agent bot ready.\nProvider: ${activeProviderName(state)}\nActive project: ${project}\n\nCommands:\n/projects - switch project\n/provider - switch coding agent provider\n/history - resume a past session\n/stop - kill active process\n/status - current state\n/new - reset session`,
+      `Assistente di sviluppo pronto.\nAssistente: ${activeProviderName(state)}\nProgetto attivo: ${project}\n\nComandi:\n/projects - cambia progetto\n/provider - scegli l’assistente di sviluppo\n/history - riprendi una sessione precedente\n/stop - interrompi l’esecuzione in corso\n/status - stato attuale\n/new - azzera la sessione`,
       { reply_markup: mainKeyboard }
     );
   });
@@ -931,7 +940,7 @@ export function createBot(
         .text(`${mark}${provider.displayName}`, `provider:${provider.id}`)
         .row();
     }
-    await ctx.reply("Select a coding agent provider:", {
+    await ctx.reply("Scegli l’assistente di sviluppo:", {
       reply_markup: keyboard,
     });
   });
@@ -940,7 +949,7 @@ export function createBot(
     const chosen = ctx.match?.[1] as ProviderId;
     const provider = listProviders().find((p) => p.id === chosen);
     if (!provider) {
-      await ctx.answerCallbackQuery({ text: "Unknown provider" });
+      await ctx.answerCallbackQuery({ text: "Assistente sconosciuto" });
       return;
     }
     const state = getState(getScope(ctx));
@@ -951,11 +960,13 @@ export function createBot(
     // setActiveProvider mutates state.activeProvider in place and persists
     setActiveProvider(state, chosen);
     await ctx.answerCallbackQuery({
-      text: `Switched to ${provider.displayName}`,
+      text: `Assistente selezionato: ${provider.displayName}`,
     });
-    const stoppedSuffix = wasRunning ? " Previous run was stopped." : "";
+    const stoppedSuffix = wasRunning
+      ? " L’esecuzione precedente è stata interrotta."
+      : "";
     await ctx.editMessageText(
-      `Active provider: ${provider.displayName}.${stoppedSuffix}`
+      `Assistente attivo: ${provider.displayName}.${stoppedSuffix}`
     );
   });
 
@@ -968,7 +979,7 @@ export function createBot(
       const mark = choice.id === current ? "✓ " : "";
       keyboard.text(`${mark}${choice.label}`, `model:${choice.id}`).row();
     }
-    await ctx.reply(`Select a model for ${activeProviderName(state)}:`, {
+    await ctx.reply(`Scegli un modello per ${activeProviderName(state)}:`, {
       reply_markup: keyboard,
     });
   });
@@ -979,13 +990,13 @@ export function createBot(
     const provider = state.activeProvider;
     const choice = getModels(provider).find((m) => m.id === chosen);
     if (!choice) {
-      await ctx.answerCallbackQuery({ text: "Unknown model" });
+      await ctx.answerCallbackQuery({ text: "Modello sconosciuto" });
       return;
     }
     setModel(state, provider, chosen);
-    await ctx.answerCallbackQuery({ text: `Model: ${choice.label}` });
+    await ctx.answerCallbackQuery({ text: `Modello: ${choice.label}` });
     await ctx.editMessageText(
-      `${activeProviderName(state)} model: ${choice.label}. Applies to your next message.`
+      `Modello di ${activeProviderName(state)}: ${choice.label}. Si applica dal prossimo messaggio.`
     );
   });
 
@@ -998,11 +1009,13 @@ export function createBot(
     for (const choice of getEffortLevels(provider)) {
       const mark = choice.id === current ? "✓ " : "";
       const label =
-        choice.id === defaultId ? `${choice.label} (default)` : choice.label;
+        choice.id === defaultId
+          ? `${choice.label} (predefinito)`
+          : choice.label;
       keyboard.text(`${mark}${label}`, `effort:${choice.id}`).row();
     }
     await ctx.reply(
-      `Select reasoning effort for ${activeProviderName(state)}:`,
+      `Scegli il livello di ragionamento per ${activeProviderName(state)}:`,
       {
         reply_markup: keyboard,
       }
@@ -1015,13 +1028,15 @@ export function createBot(
     const provider = state.activeProvider;
     const choice = getEffortLevels(provider).find((e) => e.id === chosen);
     if (!choice) {
-      await ctx.answerCallbackQuery({ text: "Unknown effort level" });
+      await ctx.answerCallbackQuery({
+        text: "Livello di ragionamento sconosciuto",
+      });
       return;
     }
     setEffort(state, provider, chosen);
-    await ctx.answerCallbackQuery({ text: `Effort: ${choice.label}` });
+    await ctx.answerCallbackQuery({ text: `Ragionamento: ${choice.label}` });
     await ctx.editMessageText(
-      `${activeProviderName(state)} reasoning effort: ${choice.label}. Applies to your next message.`
+      `Livello di ragionamento di ${activeProviderName(state)}: ${choice.label}. Si applica dal prossimo messaggio.`
     );
   });
 
@@ -1041,17 +1056,17 @@ export function createBot(
     );
 
     const keyboard = new InlineKeyboard();
-    keyboard.text("General (all projects)", "project:__general__").row();
+    keyboard.text("Generale (tutti i progetti)", "project:__general__").row();
     for (const name of pageSlice) {
       keyboard.text(name, `project:${name}`).row();
     }
 
     const navRow: { text: string; data: string }[] = [];
     if (safePage > 0) {
-      navRow.push({ text: "<< Prev", data: `projects:${safePage - 1}` });
+      navRow.push({ text: "← Precedenti", data: `projects:${safePage - 1}` });
     }
     if (safePage < totalPages - 1) {
-      navRow.push({ text: "Next >>", data: `projects:${safePage + 1}` });
+      navRow.push({ text: "Successivi →", data: `projects:${safePage + 1}` });
     }
     if (navRow.length > 0) {
       for (const btn of navRow) {
@@ -1062,14 +1077,14 @@ export function createBot(
 
     const pageIndicator =
       totalPages > 1 ? ` (${safePage + 1}/${totalPages})` : "";
-    return { text: `Select a project${pageIndicator}:`, keyboard };
+    return { text: `Scegli un progetto${pageIndicator}:`, keyboard };
   }
 
   bot.command("projects", async (ctx) => {
     const result = buildProjectsMessage(0, projectsDir);
 
     if (!result) {
-      await ctx.reply(`No projects found in ${projectsDir}`, {
+      await ctx.reply(`Nessun progetto trovato in ${projectsDir}`, {
         reply_markup: mainKeyboard,
       });
       return;
@@ -1083,7 +1098,7 @@ export function createBot(
     const result = buildProjectsMessage(page, projectsDir);
 
     if (!result) {
-      await ctx.answerCallbackQuery({ text: "No projects found" });
+      await ctx.answerCallbackQuery({ text: "Nessun progetto trovato" });
       return;
     }
 
@@ -1095,13 +1110,13 @@ export function createBot(
     const name = ctx.match?.[1] ?? "";
     const isGeneral = name === "__general__";
     const fullPath = isGeneral ? projectsDir : join(projectsDir, name);
-    const displayName = isGeneral ? "general (all projects)" : name;
+    const displayName = isGeneral ? "Generale (tutti i progetti)" : name;
 
     if (!isGeneral) {
       try {
         statSync(fullPath);
       } catch {
-        await ctx.answerCallbackQuery({ text: "Project not found" });
+        await ctx.answerCallbackQuery({ text: "Progetto non trovato" });
         return;
       }
     }
@@ -1117,7 +1132,9 @@ export function createBot(
     state.composeMessages = undefined;
     await cleanupQueueStatus(state, ctx);
     await cleanupComposeStatus(state, ctx);
-    await ctx.answerCallbackQuery({ text: `Switched to ${displayName}` });
+    await ctx.answerCallbackQuery({
+      text: `Progetto selezionato: ${displayName}`,
+    });
     const ghUrl = isGeneral ? null : getGitHubUrl(fullPath);
     const projectLabel = ghUrl
       ? `<a href="${escapeHtml(ghUrl)}">${escapeHtml(displayName)}</a>`
@@ -1126,7 +1143,7 @@ export function createBot(
     const branchSuffix = branch ? ` [${escapeHtml(branch)}]` : "";
     const providerSuffix = ` · ${escapeHtml(activeProviderName(state))}`;
     const msg = await ctx.editMessageText(
-      `Active project: ${projectLabel}${branchSuffix}${providerSuffix}`,
+      `Progetto attivo: ${projectLabel}${branchSuffix}${providerSuffix}`,
       { parse_mode: "HTML" }
     );
     await repinMessage(ctx, chatId, msg);
@@ -1227,7 +1244,7 @@ export function createBot(
     try {
       const path = createProjectFolder(projectsDir, name);
       await ctx.reply(
-        `Progetto creato: ${name}\nCartella: ${path}\nScegli l'agente per aprire il nuovo argomento:`,
+        `Progetto creato: ${name}\nCartella: ${path}\nScegli l'assistente per aprire il nuovo argomento:`,
         { reply_markup: providerKeyboard(name) }
       );
     } catch (error) {
@@ -1243,7 +1260,7 @@ export function createBot(
     const scope = getScope(ctx);
     if (scope.kind === "private") {
       await ctx.reply(
-        "Le sessioni per argomento vivono nel gruppo Dev: usa /nuova li dentro."
+        "Le sessioni per argomento vivono nel gruppo Dev: usa /nuova lì dentro."
       );
       return;
     }
@@ -1267,7 +1284,7 @@ export function createBot(
       return;
     }
     if (providerArg !== "claude" && providerArg !== "codex") {
-      await ctx.reply(`Agente per ${projectLabel(projectName)}:`, {
+      await ctx.reply(`Assistente per ${projectLabel(projectName)}:`, {
         reply_markup: providerKeyboard(projectName),
       });
       return;
@@ -1305,7 +1322,7 @@ export function createBot(
       await ctx.answerCallbackQuery({ text: "Progetto non trovato" });
       return;
     }
-    await ctx.editMessageText(`Agente per ${projectLabel(projectName)}:`, {
+    await ctx.editMessageText(`Assistente per ${projectLabel(projectName)}:`, {
       reply_markup: providerKeyboard(projectName),
     });
     await ctx.answerCallbackQuery();
@@ -1393,8 +1410,8 @@ export function createBot(
     await cleanupQueueStatus(state, ctx);
     await cleanupComposeStatus(state, ctx);
     const msg = stopped
-      ? `Process stopped.${hadQueue ? " Queue cleared." : ""}`
-      : "No active process.";
+      ? `Esecuzione interrotta.${hadQueue ? " Coda svuotata." : ""}`
+      : "Nessuna esecuzione in corso.";
     await ctx.reply(msg, { reply_markup: mainKeyboard });
   });
 
@@ -1404,7 +1421,7 @@ export function createBot(
     const activeRun = getActiveRunSnapshot(state.runKey);
     let running = "No";
     if (hasActiveProcess(state.runKey)) {
-      running = activeRun ? formatActiveRunTiming(activeRun) : "Yes";
+      running = activeRun ? formatActiveRunTiming(activeRun) : "Sì";
     }
     const sessionCount = await runtime.runPromise(
       countSessions(state.activeProvider)
@@ -1413,11 +1430,11 @@ export function createBot(
       state.activeProject && state.activeProject !== projectsDir
         ? getCurrentBranch(state.activeProject)
         : null;
-    const branchLine = branch ? `\nBranch: ${branch}` : "";
+    const branchLine = branch ? `\nRamo Git: ${branch}` : "";
     const queueLine =
-      state.queue.length > 0 ? `\nQueued: ${state.queue.length}` : "";
+      state.queue.length > 0 ? `\nIn coda: ${state.queue.length}` : "";
     const composeLine = state.composeMessages
-      ? `\nComposing: ${state.composeMessages.length} messages`
+      ? `\nComposizione: ${state.composeMessages.length} messaggi`
       : "";
     const provider = state.activeProvider;
     const modelId = state.models[provider] ?? "default";
@@ -1430,7 +1447,7 @@ export function createBot(
     const sessionWarning = await statusSessionWarning(state);
 
     await ctx.reply(
-      `Provider: ${activeProviderName(state)}\nModel: ${modelLabel} · Effort: ${effortLabel}\nProject: ${project}\nRunning: ${running}\nSessions: ${sessionCount}${branchLine}${queueLine}${composeLine}${sessionWarning}`,
+      `Assistente: ${activeProviderName(state)}\nModello: ${modelLabel} · Ragionamento: ${effortLabel}\nProgetto: ${project}\nIn esecuzione: ${running}\nSessioni: ${sessionCount}${branchLine}${queueLine}${composeLine}${sessionWarning}`,
       { reply_markup: mainKeyboard }
     );
   });
@@ -1438,23 +1455,23 @@ export function createBot(
   bot.command("help", async (ctx) => {
     await ctx.reply(
       [
-        "<b>Commands:</b>",
+        "<b>Comandi:</b>",
         "/menu — pulsanti per progetti, attività e impostazioni",
         "/nuova — apri un argomento dalla lista dei progetti",
         "/nuovo_progetto nome — crea cartella e prepara il nuovo argomento",
-        "/projects — switch active project",
-        "/provider — switch coding agent provider",
-        "/model — switch model for the active provider",
-        "/effort — switch reasoning effort for the active provider",
-        "/history — resume a past session",
-        "/new — start fresh conversation",
-        "/stop — kill active process",
-        "/status — show current state",
-        "/branch — show current git branch",
-        "/pr — list open pull requests",
-        "/compose — start collecting messages",
-        "/send — send composed messages",
-        "/cancel — cancel compose mode",
+        "/projects — cambia progetto attivo",
+        "/provider — scegli l’assistente di sviluppo",
+        "/model — scegli il modello dell’assistente attivo",
+        "/effort — scegli il livello di ragionamento dell’assistente attivo",
+        "/history — riprendi una sessione precedente",
+        "/new — inizia una nuova conversazione",
+        "/stop — interrompi l’esecuzione in corso",
+        "/status — mostra lo stato attuale",
+        "/branch — mostra il ramo Git attuale",
+        "/pr — elenca le richieste di modifica aperte",
+        "/compose — inizia a raccogliere messaggi",
+        "/send — invia i messaggi raccolti",
+        "/cancel — annulla la composizione",
         "/permessi — approvazioni per questa conversazione",
         "/stats — tempi, costi disponibili ed esiti",
         "/riepilogo — aggiorna il riepilogo fissato",
@@ -1462,9 +1479,9 @@ export function createBot(
         "/programmi — elenco lavori programmati",
         "/annulla_programma — annulla un programma",
         "/eventi — collega le notifiche dei servizi",
-        "/help — show this message",
+        "/help — mostra questo messaggio",
         "",
-        "Send any text or voice message to chat with the active coding agent in the active project.",
+        "Invia un messaggio di testo o vocale per lavorare con l’assistente attivo sul progetto selezionato.",
       ].join("\n"),
       { parse_mode: "HTML", reply_markup: mainKeyboard }
     );
@@ -1473,15 +1490,20 @@ export function createBot(
   bot.command("branch", async (ctx) => {
     const state = getState(getScope(ctx));
     if (!state.activeProject || state.activeProject === projectsDir) {
-      await ctx.reply("No project selected or in general mode.", {
-        reply_markup: mainKeyboard,
-      });
+      await ctx.reply(
+        "Seleziona un progetto specifico: nessun progetto attivo oppure modalità Generale.",
+        {
+          reply_markup: mainKeyboard,
+        }
+      );
       return;
     }
 
     const current = getCurrentBranch(state.activeProject);
     if (!current) {
-      await ctx.reply("Not a git repository.", { reply_markup: mainKeyboard });
+      await ctx.reply("La cartella non è un repository Git.", {
+        reply_markup: mainKeyboard,
+      });
       return;
     }
 
@@ -1492,7 +1514,7 @@ export function createBot(
     const collapsed = others.slice(10);
     const lines = [
       `<b>${escapeHtml(projectName)}</b>`,
-      `Current: <code>${escapeHtml(current)}</code>`,
+      `Attuale: <code>${escapeHtml(current)}</code>`,
     ];
     if (visible.length > 0) {
       lines.push("", ...visible.map((b) => `<code>${escapeHtml(b)}</code>`));
@@ -1505,7 +1527,7 @@ export function createBot(
     }
     // listBranches caps at 50; if we got exactly 50 others, there are likely more
     if (others.length >= 49) {
-      lines.push("<i>...showing most recent branches only</i>");
+      lines.push("<i>…sono mostrati soltanto i rami più recenti</i>");
     }
     await ctx.reply(lines.join("\n"), {
       parse_mode: "HTML",
@@ -1516,21 +1538,29 @@ export function createBot(
   bot.command("pr", async (ctx) => {
     const state = getState(getScope(ctx));
     if (!state.activeProject || state.activeProject === projectsDir) {
-      await ctx.reply("No project selected or in general mode.", {
-        reply_markup: mainKeyboard,
-      });
+      await ctx.reply(
+        "Seleziona un progetto specifico: nessun progetto attivo oppure modalità Generale.",
+        {
+          reply_markup: mainKeyboard,
+        }
+      );
       return;
     }
 
     const prs = listOpenPRs(state.activeProject);
     if (prs === null) {
-      await ctx.reply("Could not fetch PRs. Is gh CLI authenticated?", {
-        reply_markup: mainKeyboard,
-      });
+      await ctx.reply(
+        "Impossibile recuperare le richieste di modifica. Verifica l’autenticazione della CLI gh.",
+        {
+          reply_markup: mainKeyboard,
+        }
+      );
       return;
     }
     if (prs.length === 0) {
-      await ctx.reply("No open PRs.", { reply_markup: mainKeyboard });
+      await ctx.reply("Nessuna richiesta di modifica aperta.", {
+        reply_markup: mainKeyboard,
+      });
       return;
     }
 
@@ -1565,7 +1595,7 @@ export function createBot(
     await cleanupQueueStatus(state, ctx);
     await cleanupComposeStatus(state, ctx);
     await ctx.reply(
-      "Session cleared. Next message starts a fresh conversation.",
+      "Sessione azzerata. Il prossimo messaggio inizierà una nuova conversazione.",
       { reply_markup: mainKeyboard }
     );
   });
@@ -1574,16 +1604,16 @@ export function createBot(
     const state = getState(getScope(ctx));
     if (state.composeMessages) {
       await ctx.reply(
-        `Already composing (${state.composeMessages.length} messages). /send when done.`
+        `Composizione già attiva (${state.composeMessages.length} messaggi). Usa /send quando hai finito.`
       );
       return;
     }
     state.composeMessages = [];
     const keyboard = new InlineKeyboard()
-      .text("Send", `compose_send:${getUserId(ctx)}`)
-      .text("Cancel", `compose_cancel:${getUserId(ctx)}`);
+      .text("Invia", `compose_send:${getUserId(ctx)}`)
+      .text("Annulla", `compose_cancel:${getUserId(ctx)}`);
     const msg = await ctx.reply(
-      "Compose mode. Send messages — /send when done.",
+      "Composizione attiva. Invia i messaggi, poi usa /send quando hai finito.",
       { reply_markup: keyboard }
     );
     state.composeStatusMessageId = msg.message_id;
@@ -1592,13 +1622,15 @@ export function createBot(
   /** Execute send: combine composed messages and send to the active provider */
   async function executeSend(ctx: Context, state: UserState) {
     if (!state.composeMessages) {
-      await ctx.reply("Not in compose mode.", { reply_markup: mainKeyboard });
+      await ctx.reply("La composizione non è attiva.", {
+        reply_markup: mainKeyboard,
+      });
       return;
     }
     if (state.composeMessages.length === 0) {
       state.composeMessages = undefined;
       await cleanupComposeStatus(state, ctx);
-      await ctx.reply("Nothing to send. Compose cancelled.", {
+      await ctx.reply("Nessun messaggio da inviare. Composizione annullata.", {
         reply_markup: mainKeyboard,
       });
       return;
@@ -1614,13 +1646,15 @@ export function createBot(
   /** Execute cancel: discard composed messages */
   async function executeCancel(ctx: Context, state: UserState) {
     if (!state.composeMessages) {
-      await ctx.reply("Not in compose mode.", { reply_markup: mainKeyboard });
+      await ctx.reply("La composizione non è attiva.", {
+        reply_markup: mainKeyboard,
+      });
       return;
     }
     const count = state.composeMessages.length;
     state.composeMessages = undefined;
     await cleanupComposeStatus(state, ctx);
-    await ctx.reply(`Compose cancelled. ${count} message(s) discarded.`, {
+    await ctx.reply(`Composizione annullata. Messaggi scartati: ${count}.`, {
       reply_markup: mainKeyboard,
     });
   }
@@ -1652,20 +1686,20 @@ export function createBot(
     const date = new Date(isoTimestamp);
     const diffMin = Math.floor((Date.now() - date.getTime()) / 60_000);
     if (diffMin < 1) {
-      return "just now";
+      return "adesso";
     }
     if (diffMin < 60) {
-      return `${diffMin}m ago`;
+      return `${diffMin} min fa`;
     }
     const diffHour = Math.floor(diffMin / 60);
     if (diffHour < 24) {
-      return `${diffHour}h ago`;
+      return `${diffHour} h fa`;
     }
     const diffDay = Math.floor(diffHour / 24);
     if (diffDay < 7) {
-      return `${diffDay}d ago`;
+      return `${diffDay} giorni fa`;
     }
-    return date.toLocaleDateString("en-US", {
+    return date.toLocaleDateString("it-IT", {
       month: "short",
       day: "numeric",
     });
@@ -1692,17 +1726,17 @@ export function createBot(
       keyboard.text(String(n), `session:${s.sessionId}`);
       const when = escapeHtml(formatRelativeTime(s.lastActiveAt));
       const project = escapeHtml(s.projectName);
-      const topic = escapeHtml(s.summary.trim() || "(no topic)");
+      const topic = escapeHtml(s.summary.trim() || "(senza argomento)");
       return `<b>${n}.</b> ${when} · <i>${project}</i>\n${topic}`;
     });
     keyboard.row();
 
     const navRow: { text: string; data: string }[] = [];
     if (safePage > 0) {
-      navRow.push({ text: "<< Prev", data: `history:${safePage - 1}` });
+      navRow.push({ text: "← Precedenti", data: `history:${safePage - 1}` });
     }
     if (safePage < totalPages - 1) {
-      navRow.push({ text: "Next >>", data: `history:${safePage + 1}` });
+      navRow.push({ text: "Successivi →", data: `history:${safePage + 1}` });
     }
     if (navRow.length > 0) {
       for (const btn of navRow) {
@@ -1713,7 +1747,7 @@ export function createBot(
 
     const pageIndicator =
       totalPages > 1 ? ` (${safePage + 1}/${totalPages})` : "";
-    const text = `<b>Sessions${pageIndicator}</b>\n\n${blocks.join("\n\n")}`;
+    const text = `<b>Sessioni${pageIndicator}</b>\n\n${blocks.join("\n\n")}`;
     return { text, keyboard };
   }
 
@@ -1722,7 +1756,7 @@ export function createBot(
     const result = buildHistoryMessage(0, state.activeProvider);
 
     if (!result) {
-      await ctx.reply("No session history found.", {
+      await ctx.reply("Nessuna sessione precedente trovata.", {
         reply_markup: mainKeyboard,
       });
       return;
@@ -1740,7 +1774,7 @@ export function createBot(
     const result = buildHistoryMessage(page, state.activeProvider);
 
     if (!result) {
-      await ctx.answerCallbackQuery({ text: "No sessions found" });
+      await ctx.answerCallbackQuery({ text: "Nessuna sessione trovata" });
       return;
     }
 
@@ -1761,7 +1795,7 @@ export function createBot(
     }
 
     if (!state.activeProject) {
-      await ctx.answerCallbackQuery({ text: "No project selected" });
+      await ctx.answerCallbackQuery({ text: "Nessun progetto selezionato" });
       return;
     }
 
@@ -1774,9 +1808,9 @@ export function createBot(
     );
     const chatId = requireChat(ctx);
     const projectName = basename(state.activeProject);
-    await ctx.answerCallbackQuery({ text: "Session resumed" });
+    await ctx.answerCallbackQuery({ text: "Sessione ripresa" });
     const msg = await ctx.editMessageText(
-      `Resumed session in <b>${escapeHtml(projectName)}</b>. Next message continues this conversation.`,
+      `Sessione ripresa in <b>${escapeHtml(projectName)}</b>. Il prossimo messaggio continuerà questa conversazione.`,
       { parse_mode: "HTML" }
     );
     await repinMessage(ctx, chatId, msg);
@@ -1786,7 +1820,9 @@ export function createBot(
     const state = getState(getScope(ctx));
     const stopped = stopScope(state.runKey, "new_prompt");
     await ctx.answerCallbackQuery({
-      text: stopped ? "Stopping current task..." : "No active process",
+      text: stopped
+        ? "Interruzione dell’attività in corso…"
+        : "Nessuna esecuzione in corso",
     });
   });
 
@@ -1797,7 +1833,9 @@ export function createBot(
     await cleanupQueueStatus(state, ctx);
     await ctx.answerCallbackQuery({
       text:
-        count > 0 ? `Cleared ${count} queued message(s).` : "Queue is empty.",
+        count > 0
+          ? `Messaggi rimossi dalla coda: ${count}.`
+          : "La coda è vuota.",
     });
   });
 
@@ -1810,7 +1848,7 @@ export function createBot(
   ) {
     const planPath = result.planPath;
     if (!planPath) {
-      await ctx.reply("Could not read plan file.", {
+      await ctx.reply("Impossibile leggere il file del piano.", {
         reply_markup: mainKeyboard,
       });
       return;
@@ -1819,7 +1857,7 @@ export function createBot(
     try {
       planContent = readFileSync(planPath, "utf-8");
     } catch {
-      await ctx.reply("Could not read plan file.", {
+      await ctx.reply("Impossibile leggere il file del piano.", {
         reply_markup: mainKeyboard,
       });
       return;
@@ -1838,17 +1876,15 @@ export function createBot(
     }
 
     const keyboard = new InlineKeyboard()
-      .text("Execute (new session)", `plan_new:${userId}`)
+      .text("Esegui (nuova sessione)", `plan_new:${userId}`)
       .row()
-      .text("Execute (keep context)", `plan_resume:${userId}`)
+      .text("Esegui (mantieni il contesto)", `plan_resume:${userId}`)
       .row()
-      .text("Modify plan", `plan_modify:${userId}`);
+      .text("Modifica il piano", `plan_modify:${userId}`);
 
-    await ctx.api.sendMessage(
-      chatId,
-      "Plan ready. How would you like to proceed?",
-      { reply_markup: keyboard }
-    );
+    await ctx.api.sendMessage(chatId, "Piano pronto. Come vuoi procedere?", {
+      reply_markup: keyboard,
+    });
   }
 
   bot.callbackQuery(PLAN_NEW_RE, async (ctx) => {
@@ -1856,7 +1892,7 @@ export function createBot(
     const state = getState(getScope(ctx));
     const plan = activePendingPlan(state);
     if (!plan) {
-      await ctx.answerCallbackQuery({ text: "No pending plan" });
+      await ctx.answerCallbackQuery({ text: "Nessun piano in attesa" });
       return;
     }
 
@@ -1864,7 +1900,9 @@ export function createBot(
     try {
       planContent = readFileSync(plan.planPath, "utf-8");
     } catch {
-      await ctx.answerCallbackQuery({ text: "Could not read plan file" });
+      await ctx.answerCallbackQuery({
+        text: "Impossibile leggere il file del piano",
+      });
       state.pendingPlan = undefined;
       return;
     }
@@ -1877,8 +1915,10 @@ export function createBot(
       )
     );
     state.pendingPlan = undefined;
-    await ctx.answerCallbackQuery({ text: "Executing plan (new session)..." });
-    await ctx.editMessageText("Executing plan (new session)...");
+    await ctx.answerCallbackQuery({
+      text: "Esecuzione del piano (nuova sessione)…",
+    });
+    await ctx.editMessageText("Esecuzione del piano (nuova sessione)…");
 
     const prompt = `Execute the following plan. Do not re-enter plan mode.\n\n${planContent}`;
     runAndDrain(ctx, prompt, state, userId).catch((e) =>
@@ -1891,7 +1931,7 @@ export function createBot(
     const state = getState(getScope(ctx));
     const plan = activePendingPlan(state);
     if (!plan) {
-      await ctx.answerCallbackQuery({ text: "No pending plan" });
+      await ctx.answerCallbackQuery({ text: "Nessun piano in attesa" });
       return;
     }
 
@@ -1907,9 +1947,11 @@ export function createBot(
     }
     state.pendingPlan = undefined;
     await ctx.answerCallbackQuery({
-      text: "Executing plan (keeping context)...",
+      text: "Esecuzione del piano (con il contesto attuale)…",
     });
-    await ctx.editMessageText("Executing plan (keeping context)...");
+    await ctx.editMessageText(
+      "Esecuzione del piano (con il contesto attuale)…"
+    );
 
     const prompt =
       "The plan has been approved. Proceed with execution. Do not re-enter plan mode.";
@@ -1922,16 +1964,16 @@ export function createBot(
     const userId = ctx.from.id;
     const state = getState(getScope(ctx));
     if (!activePendingPlan(state)) {
-      await ctx.answerCallbackQuery({ text: "No pending plan" });
+      await ctx.answerCallbackQuery({ text: "Nessun piano in attesa" });
       return;
     }
     const cancelKeyboard = new InlineKeyboard().text(
-      "Cancel",
+      "Annulla",
       `plan_cancel:${userId}`
     );
-    await ctx.answerCallbackQuery({ text: "Send your feedback" });
+    await ctx.answerCallbackQuery({ text: "Invia le tue osservazioni" });
     await ctx.editMessageText(
-      "Send your feedback. Next message will continue the conversation with plan context.",
+      "Invia le tue osservazioni. Il prossimo messaggio continuerà la conversazione mantenendo il contesto del piano.",
       { reply_markup: cancelKeyboard }
     );
   });
@@ -1940,17 +1982,17 @@ export function createBot(
     const userId = ctx.from.id;
     const state = getState(getScope(ctx));
     if (!activePendingPlan(state)) {
-      await ctx.answerCallbackQuery({ text: "No pending plan" });
+      await ctx.answerCallbackQuery({ text: "Nessun piano in attesa" });
       return;
     }
     const keyboard = new InlineKeyboard()
-      .text("Execute (new session)", `plan_new:${userId}`)
+      .text("Esegui (nuova sessione)", `plan_new:${userId}`)
       .row()
-      .text("Execute (keep context)", `plan_resume:${userId}`)
+      .text("Esegui (mantieni il contesto)", `plan_resume:${userId}`)
       .row()
-      .text("Modify plan", `plan_modify:${userId}`);
+      .text("Modifica il piano", `plan_modify:${userId}`);
     await ctx.answerCallbackQuery();
-    await ctx.editMessageText("Plan ready. How would you like to proceed?", {
+    await ctx.editMessageText("Piano pronto. Come vuoi procedere?", {
       reply_markup: keyboard,
     });
   });
@@ -1962,9 +2004,12 @@ export function createBot(
 
     if (!state.activeProject) {
       setActiveProject(state, projectsDir);
-      await ctx.reply("No project selected. Using General (all projects).", {
-        reply_markup: mainKeyboard,
-      });
+      await ctx.reply(
+        "Nessun progetto selezionato. Uso Generale (tutti i progetti).",
+        {
+          reply_markup: mainKeyboard,
+        }
+      );
     }
 
     const pendingPlan = activePendingPlan(state);
@@ -2224,16 +2269,24 @@ export function createBot(
     if (scopeControllers.get(state.runKey) === controller) {
       scopeControllers.delete(state.runKey);
     }
+    const outcomeLabel: Record<RunRecord["outcome"], string> = {
+      done: "completata",
+      errored: "errore",
+      interrupted: "interrotta",
+      timeout: "tempo scaduto",
+      already_running: "già in corso",
+      at_capacity: "limite di esecuzioni raggiunto",
+    };
     await refreshSummary(
       ctx,
       outcome.presentedPlan
         ? "Piano in attesa"
-        : `Esecuzione terminata (${lastOutcome})`
+        : `Esecuzione terminata (${outcomeLabel[lastOutcome]})`
     );
     if (state.threadId !== undefined && Date.now() - startedAt >= 120_000) {
       let label = "esecuzione terminata";
       if (lastOutcome !== "done") {
-        label = `esecuzione terminata: ${lastOutcome}`;
+        label = `esecuzione terminata: ${outcomeLabel[lastOutcome]}`;
       }
       if (outcome.presentedPlan) {
         label = "piano in attesa";
@@ -2264,11 +2317,11 @@ export function createBot(
     state: UserState
   ) {
     const remaining = state.queue.length;
-    const queueInfo = remaining > 0 ? ` | ${remaining} more in queue` : "";
+    const queueInfo = remaining > 0 ? ` | altri ${remaining} in coda` : "";
     const preview = prompt.length > 200 ? `${prompt.slice(0, 200)}...` : prompt;
     await ctx
       .reply(
-        `<b>▶ Processing queued message</b>${queueInfo}\n<pre>${escapeHtml(preview)}</pre>`,
+        `<b>▶ Elaborazione del messaggio in coda</b>${queueInfo}\n<pre>${escapeHtml(preview)}</pre>`,
         { parse_mode: "HTML" }
       )
       .catch(swallow);
@@ -2325,11 +2378,14 @@ export function createBot(
 
   /** Send or update the "Message queued" status message with Force Send button */
   async function sendOrUpdateQueueStatus(ctx: Context, state: UserState) {
-    const text = `Message queued (${state.queue.length} in queue)`;
+    const text = `Messaggio aggiunto alla coda (totale: ${state.queue.length})`;
     const keyboard = new InlineKeyboard()
-      .text("Force Send — stops current task", `force_send:${ctx.from?.id}`)
+      .text(
+        "Invia subito — interrompe l’attività in corso",
+        `force_send:${ctx.from?.id}`
+      )
       .row()
-      .text("Clear Queue", `clear_queue:${ctx.from?.id}`);
+      .text("Svuota la coda", `clear_queue:${ctx.from?.id}`);
     if (state.queueStatusMessageId) {
       await ctx.api
         .editMessageText(requireChat(ctx), state.queueStatusMessageId, text, {
@@ -2355,10 +2411,10 @@ export function createBot(
   /** Send or update compose mode status message with inline buttons */
   async function updateComposeStatus(ctx: Context, state: UserState) {
     const count = state.composeMessages?.length ?? 0;
-    const text = `Composing (${count} message${count !== 1 ? "s" : ""})`;
+    const text = `Composizione (${count} ${count === 1 ? "messaggio" : "messaggi"})`;
     const keyboard = new InlineKeyboard()
-      .text("Send", `compose_send:${ctx.from?.id}`)
-      .text("Cancel", `compose_cancel:${ctx.from?.id}`);
+      .text("Invia", `compose_send:${ctx.from?.id}`)
+      .text("Annulla", `compose_cancel:${ctx.from?.id}`);
     if (state.composeStatusMessageId) {
       await ctx.api
         .editMessageText(requireChat(ctx), state.composeStatusMessageId, text, {
@@ -2387,14 +2443,14 @@ export function createBot(
     const url = `https://api.telegram.org/file/bot${token}/${file.file_path}`;
     const res = await fetch(url);
     const buffer = Buffer.from(await res.arrayBuffer());
-    const status = await ctx.reply("Transcribing...", {
+    const status = await ctx.reply("Trascrizione in corso…", {
       reply_parameters: { message_id: messageId },
     });
     const transcription = await transcribeAudio(buffer, "voice.ogg");
     const maxDisplay = 3800;
     const displayText =
       transcription.length > maxDisplay
-        ? `${transcription.slice(0, maxDisplay)}... (truncated)`
+        ? `${transcription.slice(0, maxDisplay)}... (testo abbreviato)`
         : transcription;
     await ctx.api.editMessageText(
       requireChat(ctx),
@@ -2460,7 +2516,7 @@ export function createBot(
     }
     if (messages.length >= MAX_COMPOSE_MESSAGES) {
       await ctx.reply(
-        `Compose limit reached (${MAX_COMPOSE_MESSAGES} messages). Use /send to submit or /stop to clear.`
+        `Limite di composizione raggiunto (${MAX_COMPOSE_MESSAGES} messaggi). Usa /send per inviarli o /stop per eliminarli.`
       );
       return;
     }
@@ -2470,8 +2526,10 @@ export function createBot(
         messages.push(message);
       }
     } catch (e) {
-      const errMsg = e instanceof Error ? e.message : "unknown error";
-      await ctx.reply(`Error collecting message: ${errMsg}`).catch(swallow);
+      const errMsg = e instanceof Error ? e.message : "errore sconosciuto";
+      await ctx
+        .reply(`Errore durante la raccolta del messaggio: ${errMsg}`)
+        .catch(swallow);
       return;
     }
     await updateComposeStatus(ctx, state);
@@ -2489,9 +2547,12 @@ export function createBot(
 
     if (!state.activeProject) {
       setActiveProject(state, projectsDir);
-      await ctx.reply("No project selected. Using General (all projects).", {
-        reply_markup: mainKeyboard,
-      });
+      await ctx.reply(
+        "Nessun progetto selezionato. Uso Generale (tutti i progetti).",
+        {
+          reply_markup: mainKeyboard,
+        }
+      );
     }
 
     let prompt: string;
@@ -2502,14 +2563,14 @@ export function createBot(
       );
       const buffer = readFileSync(path);
 
-      const status = await ctx.reply("Transcribing...", {
+      const status = await ctx.reply("Trascrizione in corso…", {
         reply_parameters: { message_id: ctx.message.message_id },
       });
       prompt = await transcribeAudio(buffer, "voice.ogg");
       const maxDisplay = 3800;
       const displayText =
         prompt.length > maxDisplay
-          ? `${prompt.slice(0, maxDisplay)}... (truncated)`
+          ? `${prompt.slice(0, maxDisplay)}... (testo abbreviato)`
           : prompt;
       await ctx.api.editMessageText(
         ctx.chat.id,
@@ -2520,7 +2581,7 @@ export function createBot(
     } catch (e) {
       console.error("Voice transcription error:", e);
       await ctx.reply(
-        `Transcription failed: ${e instanceof Error ? e.message : "unknown error"}`
+        `Trascrizione non riuscita: ${e instanceof Error ? e.message : "errore sconosciuto"}`
       );
       return;
     }
@@ -2540,9 +2601,12 @@ export function createBot(
     const state = getState(getScope(ctx));
     if (!state.activeProject) {
       setActiveProject(state, projectsDir);
-      await ctx.reply("No project selected. Using General (all projects).", {
-        reply_markup: mainKeyboard,
-      });
+      await ctx.reply(
+        "Nessun progetto selezionato. Uso Generale (tutti i progetti).",
+        {
+          reply_markup: mainKeyboard,
+        }
+      );
     }
 
     const download = async () => {
@@ -2596,7 +2660,7 @@ export function createBot(
     } catch (e) {
       console.error("Document upload error:", e);
       await ctx.reply(
-        `File upload failed: ${e instanceof Error ? e.message : "unknown error"}`
+        `Caricamento del file non riuscito: ${e instanceof Error ? e.message : "errore sconosciuto"}`
       );
     }
   });
@@ -2638,7 +2702,7 @@ export function createBot(
     } catch (e) {
       console.error("Media group upload error:", e);
       await ctx.reply(
-        `Photo upload failed: ${e instanceof Error ? e.message : "unknown error"}`
+        `Caricamento della foto non riuscito: ${e instanceof Error ? e.message : "errore sconosciuto"}`
       );
     }
   }
@@ -2694,7 +2758,7 @@ export function createBot(
     } catch (e) {
       console.error("Photo upload error:", e);
       await ctx.reply(
-        `Photo upload failed: ${e instanceof Error ? e.message : "unknown error"}`
+        `Caricamento della foto non riuscito: ${e instanceof Error ? e.message : "errore sconosciuto"}`
       );
     }
   });

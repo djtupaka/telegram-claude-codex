@@ -163,6 +163,36 @@ function callback(thread = 7, user = 42, chat = -100): Update {
   };
 }
 try {
+  // Both fresh Italian keyboards and older English keyboards remain commands.
+  for (const [label, expected] of [
+    ["Progetti", "Scegli un progetto"],
+    ["Projects", "Scegli un progetto"],
+    ["Cronologia", "Nessuna sessione precedente trovata"],
+    ["History", "Nessuna sessione precedente trovata"],
+    ["Interrompi", "Nessuna esecuzione in corso"],
+    ["Stop", "Nessuna esecuzione in corso"],
+    ["Nuova sessione", "Sessione azzerata"],
+    ["New", "Sessione azzerata"],
+    ["Componi", "Composizione attiva"],
+    ["Compose", "Composizione attiva"],
+  ]) {
+    const before = calls.length;
+    await bot.handleUpdate(message(label as string));
+    assert(
+      calls
+        .slice(before)
+        .some((c) => String(c.payload.text).includes(expected as string)),
+      `Keyboard label ${label} must dispatch its command`
+    );
+    await bot.handleUpdate(message("/cancel"));
+  }
+  assert.equal(
+    agentCalls,
+    0,
+    "Keyboard labels must never become agent prompts"
+  );
+  await bot.handleUpdate(message("/help"));
+  assert(calls.some((c) => String(c.payload.text).includes("<b>Comandi:</b>")));
   await bot.handleUpdate(message("/menu", 0));
   assert(
     calls.some((c) =>
@@ -325,7 +355,11 @@ try {
   const first = bot.handleUpdate(message("Prima richiesta controllata"));
   await firstStarted;
   await bot.handleUpdate(message("Seconda richiesta accodata"));
-  assert(calls.some((c) => String(c.payload.text).includes("Message queued")));
+  assert(
+    calls.some((c) =>
+      String(c.payload.text).includes("Messaggio aggiunto alla coda")
+    )
+  );
   stopBotOperations(bot);
   releaseFirst();
   await first;
