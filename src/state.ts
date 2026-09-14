@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, renameSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { Effect } from "effect";
 import {
   importLegacySessions,
@@ -34,10 +34,124 @@ interface BotState {
   activeProvider: ProviderId;
   efforts: ProviderChoices;
   models: ProviderChoices;
+  /**
+   * Forum-topic scope key (`t:<chatId>:<threadId>`). When set, persistence goes
+   * to the topic record in topics.json instead of the global state.json.
+   */
+  scopeKey?: string;
 }
 
 const DATA_DIR = join(import.meta.dirname, "..", ".data");
 const STATE_FILE = join(DATA_DIR, "state.json");
+const TOPICS_FILE = join(DATA_DIR, "topics.json");
+
+/** One forum topic = one independent session scope (project, provider, choices). */
+export interface TopicRecord {
+  activeProject: string;
+  activeProvider: ProviderId;
+  chatId: number;
+  createdAt: string;
+  efforts: ProviderChoices;
+  models: ProviderChoices;
+  name: string;
+  threadId: number;
+}
+
+interface TopicsFile {
+  topics: Record<string, TopicRecord>;
+  version: 1;
+}
+
+const isProviderId = (v: unknown): v is ProviderId =>
+  v === "claude" || v === "codex";
+
+/** Keep only well-formed topic records; a malformed file never blocks boot. */
+const coerceTopics = (raw: unknown): Record<string, TopicRecord> => {
+  const out: Record<string, TopicRecord> = {};
+  const topics =
+    raw && typeof raw === "object"
+      ? (raw as { topics?: unknown }).topics
+      : undefined;
+  if (!topics || typeof topics !== "object") {
+    return out;
+  }
+  for (const [key, value] of Object.entries(
+    topics as Record<string, unknown>
+  )) {
+    if (!value || typeof value !== "object") {
+      continue;
+    }
+    const r = value as Record<string, unknown>;
+    if (
+      typeof r.chatId !== "number" ||
+      typeof r.threadId !== "number" ||
+      typeof r.activeProject !== "string" ||
+      !isProviderId(r.activeProvider)
+    ) {
+      continue;
+    }
+    out[key] = {
+      activeProject: r.activeProject,
+      activeProvider: r.activeProvider,
+      chatId: r.chatId,
+      createdAt: typeof r.createdAt === "string" ? r.createdAt : "",
+      efforts: coerceChoices(r.efforts),
+      models: coerceChoices(r.models),
+      name: typeof r.name === "string" ? r.name : "",
+      threadId: r.threadId,
+    };
+  }
+  return out;
+};
+
+/**
+ * Topic persistence, separate from state.json so the existing global state
+ * (and its corruption handling) is untouched. Path-injectable for tests.
+ */
+export const makeTopicOps = (path = TOPICS_FILE) => {
+  const read = (): Record<string, TopicRecord> => {
+    try {
+      return coerceTopics(JSON.parse(readFileSync(path, "utf-8")) as unknown);
+    } catch {
+      return {};
+    }
+  };
+  const write = (topics: Record<string, TopicRecord>) => {
+    mkdirSync(dirname(path), { recursive: true });
+    const data: TopicsFile = { version: 1, topics };
+    writeJsonAtomic(path, data);
+  };
+  return {
+    list: () => read(),
+    get: (key: string): TopicRecord | undefined => read()[key],
+    upsert: (key: string, record: TopicRecord) => {
+      const topics = read();
+      topics[key] = record;
+      write(topics);
+    },
+    patch: (key: string, partial: Partial<TopicRecord>) => {
+      const topics = read();
+      const current = topics[key];
+      if (!current) {
+        return false;
+      }
+      topics[key] = { ...current, ...partial };
+      write(topics);
+      return true;
+    },
+    remove: (key: string) => {
+      const topics = read();
+      if (!(key in topics)) {
+        return false;
+      }
+      delete topics[key];
+      write(topics);
+      return true;
+    },
+  };
+};
+
+export const topicOps = makeTopicOps();
 export const DEFAULT_PROVIDER: ProviderId = "codex";
 
 /**
@@ -261,6 +375,17 @@ export function loadPersistedState() {
 
 /** Persist active project, provider, and per-provider model/effort choices atomically. */
 function persistState(state: BotState) {
+  if (state.scopeKey) {
+    // Topic scope: never touch the global (private-chat) state.
+    const ok = topicOps.patch(state.scopeKey, {
+      activeProject: state.activeProject,
+      activeProvider: state.activeProvider,
+      models: state.models,
+      efforts: state.efforts,
+    });
+    logEvent({ event: "topic.save", key: state.scopeKey, ok });
+    return;
+  }
   mkdirSync(DATA_DIR, { recursive: true });
   const data: PersistedState = {
     version: STATE_VERSION,

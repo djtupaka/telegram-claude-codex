@@ -32,7 +32,7 @@ export async function* runAgent(
       if (event.kind === "session_init" || event.kind === "result") {
         await runtime.runPromise(
           setSession({
-            project: opts.projectDir,
+            project: opts.sessionKey ?? opts.projectDir,
             provider: providerId,
             sessionId: event.sessionId,
           })
@@ -43,27 +43,27 @@ export async function* runAgent(
   } finally {
     // Consumer abandoned early (e.g. telegram broke on plan_ready) => tear the
     // producer down. No-op if it already ended.
-    runtime.runFork(stopRun(opts.userId, "stopped"));
+    runtime.runFork(stopRun(opts.runKey, "stopped"));
   }
 }
 
-/** Stop the active run for a user; returns whether one was running. */
+/** Stop the active run for a run key (chat or topic); returns whether one was running. */
 export const stopAgent = (
-  userId: number,
+  runKey: string,
   reason: InterruptReason = "stopped"
-) => runtime.runSync(stopRun(userId, reason));
+) => runtime.runSync(stopRun(runKey, reason));
 
-/** Whether a user has an active run. */
-export const hasActiveProcess = (userId: number) =>
-  runtime.runSync(hasRun(userId));
+/** Whether a run key has an active run. */
+export const hasActiveProcess = (runKey: string) =>
+  runtime.runSync(hasRun(runKey));
 
-/** Sanitized metadata for the user's active run, if any. */
-export const getActiveRunSnapshot = (userId: number) =>
-  runtime.runSync(getRunSnapshot(userId));
+/** Sanitized metadata for the key's active run, if any. */
+export const getActiveRunSnapshot = (runKey: string) =>
+  runtime.runSync(getRunSnapshot(runKey));
 
 /** Record meaningful progress only if this exact run is still active. */
-export const noteAgentProgress = (userId: number, runId: string, at?: number) =>
-  runtime.runSync(noteRunProgress(userId, runId, at));
+export const noteAgentProgress = (runKey: string, runId: string, at?: number) =>
+  runtime.runSync(noteRunProgress(runKey, runId, at));
 
 /** Interrupt all runs and await settle (shutdown). */
 export const stopAll = () => runtime.runPromise(stopAllRuns);

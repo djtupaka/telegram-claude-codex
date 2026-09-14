@@ -20,7 +20,9 @@ Telegram bot that bridges coding-agent CLIs (Claude Code + OpenAI Codex) with Te
 
 - **index.ts** — Entry point. Validates env vars (`BOT_TOKEN`, `ALLOWED_USER_ID`, `GROQ_API_KEY`, optional `PROJECTS_DIR`), warns (non-blocking) if `codex login status` fails, registers commands (incl. `/provider`), starts bot.
 - **bot.ts** — Grammy bot setup, command handlers (`/projects`, `/provider`, `/stop`, `/status`, `/new`, …), message routing, capability gating. Maintains per-user state: `activeProject` path, `activeProvider`, and per-provider `sessions` maps.
-- **state.ts** — Persisted bot state (`.data/state.json`). Holds `activeProject`, `activeProvider`, and provider-namespaced `sessions`. One-time migration of the old flat-session shape → `{activeProvider:"claude", sessions:{claude:<old>, codex:{}}}`.
+- **scope.ts** — Resolves where an update comes from: `private` (user-keyed, legacy), `topic` (forum topic in an `ALLOWED_CHAT_IDS` group, key `t:<chatId>:<threadId>`), `control` (group General area, commands only) or `denied`. Provides the context-scoped API transformer that injects `message_thread_id` into every send/copy/forward, and `sessionProjectKey` (topics suffix the project so scopes never share a session).
+- **topics.ts** — `createTopicSession` (createForumTopic + persist + intro message), shared by `/nuova` and `scripts/topics-seed.ts`.
+- **state.ts** — Persisted bot state (`.data/state.json`); forum topics persist separately in `.data/topics.json` via `topicOps` (a `BotState.scopeKey` routes `persistState` there instead of the global file). Holds `activeProject`, `activeProvider`, and provider-namespaced `sessions`. One-time migration of the old flat-session shape → `{activeProvider:"claude", sessions:{claude:<old>, codex:{}}}`.
 - **telegram.ts** — Consumes the normalized `AgentEvent` stream via `sendMessageDraft` (300ms interval) with fallback to progressive `editMessageText`. Auto-splits at 4000 chars. Converts Markdown → Telegram HTML. Falls back to plain text on parse failure. Footer/thinking/subagent/plan UI gated on the active provider's capabilities.
 - **transcribe.ts** — Voice message transcription via Groq Whisper (`whisper-large-v3-turbo`).
 
@@ -49,7 +51,7 @@ User message → bot.ts (access control + routing)
 
 - **Provider abstraction**: Each provider is an `AgentProvider` (spec + capabilities + history reader) in the registry. The generic `runner.ts` spawns it and emits normalized `AgentEvent`s — the seam that decouples bot.ts/telegram.ts from any specific CLI. UI features are gated on `getCapabilities(activeProvider)` (e.g. Codex shows duration only, no cost/turns; shows thinking; hides subagents).
 - **Session continuity**: Session IDs stored per provider per project in user state. Follow-up messages resume the same conversation for the active provider.
-- **One process per user**: Global, across providers — a new prompt (or a `/provider` switch) aborts any running process for that user.
+- **One process per scope** (run key = private chat or topic; global cap `MAX_CONCURRENT_RUNS`): across providers — a new prompt (or a `/provider` switch) aborts any running process for that user.
 - **Streaming**: AsyncGenerator pattern — the runner yields events, telegram.ts consumes and streams via `sendMessageDraft` (with edit-based fallback). Draft support auto-detected on first event.
 - **HTML formatting**: Markdown converted via regex with placeholder system — code blocks extracted first to avoid nested regex conflicts, then reinserted after other transformations.
 

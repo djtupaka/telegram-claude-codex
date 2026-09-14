@@ -25,6 +25,18 @@ Telegram bot interface for coding agents (Claude Code + OpenAI Codex) on a VPS. 
 - **Compose mode** — collect multiple messages (text, voice, forwarded, files, photos) into a single prompt with `/compose` and `/send`
 - **Access control** — single authorized user via Telegram user ID
 
+## Group sessions (forum topics)
+
+The same bot can also live in one Telegram supergroup with **Topics** enabled (add the bot as admin with *Manage topics*, set `ALLOWED_CHAT_IDS=<group id>`). Every topic is an independent session: its own project, provider, model, effort and conversation, persisted in `.data/topics.json`. Topics run in parallel (bounded by `MAX_CONCURRENT_RUNS`). The private chat keeps working exactly as before.
+
+- `/nuova [project] [claude|codex] [name]` — create a topic bound to a project and provider (inline pickers when arguments are omitted)
+- `/elenco` — list the group's sessions and whether they are running
+- `/chiudi` — inside a topic: stop, forget the session and close the topic
+- inside a topic all the usual commands apply (`/new`, `/stop`, `/status`, `/provider`, `/model`, `/history`, ...)
+- the group's *General* area only accepts `/nuova`, `/elenco`, `/start`, `/help`
+
+Seed the initial topics: `bun run scripts/topics-seed.ts <chatId> premelone:codex premelone:claude nodarr:codex nodarr:claude laura:claude it_home:claude:Infrastruttura`
+
 ## Prerequisites
 
 - [Bun](https://bun.sh/) runtime
@@ -58,6 +70,7 @@ Edit `.env`:
 BOT_TOKEN=your_bot_token_here
 ALLOWED_USER_ID=your_telegram_user_id
 PROJECTS_DIR=/home/agent/projects
+# ALLOWED_CHAT_IDS=-1001234567890   # optional: group(s) with forum topics
 GROQ_API_KEY=your_groq_api_key
 ```
 

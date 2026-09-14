@@ -31,6 +31,7 @@ const makeRuntime = (
   const cfg = {
     botToken: Redacted.make("x"),
     allowedUserId: 1,
+    allowedChatIds: [],
     groqApiKey: Redacted.make("x"),
     projectsDir: "/tmp",
     anthropicApiKey: Option.none(),
@@ -91,6 +92,7 @@ const makeHangingSdkSpec = (onAbort?: () => void): ProviderSpec => ({
 
 const makeOpts = (userId: number): RunOptions => ({
   chatId: userId,
+  runKey: String(userId),
   projectDir: process.cwd(),
   prompt: "",
   runId: `run-${userId}`,
@@ -174,7 +176,7 @@ describe("RunRegistry.stop on unknown user", () => {
     try {
       // stopAgent() in agent/index.ts is `runtime.runSync(stopRun(...))`; this
       // exercises the same registry path without the global runtime.
-      const stopped = await rt.runPromise(stopRun(424_242, "stopped"));
+      const stopped = await rt.runPromise(stopRun("424242", "stopped"));
       expect(stopped).toBe(false);
     } finally {
       await rt.dispose();
@@ -213,8 +215,8 @@ describe("RunRegistry — subprocess lifecycle (fake sh provider)", () => {
         startRun(makeHangingSdkSpec(), makeOpts(899))
       );
       await new Promise((resolve) => setTimeout(resolve, 100));
-      expect(await rt.runPromise(hasRun(899))).toBe(true);
-      const snapshot = await rt.runPromise(getRunSnapshot(899));
+      expect(await rt.runPromise(hasRun("899"))).toBe(true);
+      const snapshot = await rt.runPromise(getRunSnapshot("899"));
       expect(snapshot).toMatchObject({
         runId: "run-899",
         provider: "codex",
@@ -223,11 +225,11 @@ describe("RunRegistry — subprocess lifecycle (fake sh provider)", () => {
       if (snapshot) {
         (snapshot as { runId: string }).runId = "caller-mutated";
       }
-      expect(await rt.runPromise(getRunSnapshot(899))).toMatchObject({
+      expect(await rt.runPromise(getRunSnapshot("899"))).toMatchObject({
         runId: "run-899",
       });
 
-      await rt.runPromise(stopRun(899, "stopped"));
+      await rt.runPromise(stopRun("899", "stopped"));
       const terminal = await takeEvent(rt, queue);
       expect(terminal.kind).toBe("error");
       if (terminal.kind === "error") {
@@ -242,19 +244,19 @@ describe("RunRegistry — subprocess lifecycle (fake sh provider)", () => {
     const rt = makeRuntime(4, Option.none());
     try {
       await rt.runPromise(startRun(makeHangingSdkSpec(), makeOpts(899)));
-      const before = await rt.runPromise(getRunSnapshot(899));
+      const before = await rt.runPromise(getRunSnapshot("899"));
 
-      await rt.runPromise(noteRunProgress(899, "wrong-run", 5000));
-      expect((await rt.runPromise(getRunSnapshot(899)))?.lastProgressAt).toBe(
+      await rt.runPromise(noteRunProgress("899", "wrong-run", 5000));
+      expect((await rt.runPromise(getRunSnapshot("899")))?.lastProgressAt).toBe(
         before?.lastProgressAt
       );
 
-      await rt.runPromise(noteRunProgress(899, "run-899", 6000));
-      expect((await rt.runPromise(getRunSnapshot(899)))?.lastProgressAt).toBe(
+      await rt.runPromise(noteRunProgress("899", "run-899", 6000));
+      expect((await rt.runPromise(getRunSnapshot("899")))?.lastProgressAt).toBe(
         6000
       );
 
-      await rt.runPromise(stopRun(899, "stopped"));
+      await rt.runPromise(stopRun("899", "stopped"));
     } finally {
       await rt.dispose();
     }
@@ -267,7 +269,7 @@ describe("RunRegistry — subprocess lifecycle (fake sh provider)", () => {
         startRun(makeSpec("sleep 30"), makeOpts(901))
       );
 
-      expect(await rt.runPromise(getRunSnapshot(901))).toMatchObject({
+      expect(await rt.runPromise(getRunSnapshot("901"))).toMatchObject({
         runId: "run-901",
         provider: "claude",
       });
@@ -282,8 +284,8 @@ describe("RunRegistry — subprocess lifecycle (fake sh provider)", () => {
       expect(
         await waitUntil(
           async () =>
-            !(await rt.runPromise(hasRun(901))) &&
-            (await rt.runPromise(getRunSnapshot(901))) === undefined
+            !(await rt.runPromise(hasRun("901"))) &&
+            (await rt.runPromise(getRunSnapshot("901"))) === undefined
         )
       ).toBe(true);
     } finally {
@@ -309,17 +311,17 @@ describe("RunRegistry — subprocess lifecycle (fake sh provider)", () => {
 
       expect(
         await waitUntil(async () => {
-          const snapshot = await rt.runPromise(getRunSnapshot(902));
+          const snapshot = await rt.runPromise(getRunSnapshot("902"));
           return snapshot?.runId === "new-run";
         })
       ).toBe(true);
       await new Promise((resolve) => setTimeout(resolve, 100));
-      expect(await rt.runPromise(getRunSnapshot(902))).toMatchObject({
+      expect(await rt.runPromise(getRunSnapshot("902"))).toMatchObject({
         runId: "new-run",
         provider: "claude",
       });
 
-      await rt.runPromise(stopRun(902, "stopped"));
+      await rt.runPromise(stopRun("902", "stopped"));
     } finally {
       await rt.dispose();
     }
@@ -333,9 +335,9 @@ describe("RunRegistry — subprocess lifecycle (fake sh provider)", () => {
       );
       // Wait for the stream to actually start (permit acquired, process live).
       expect((await takeEvent(rt, queue)).kind).toBe("text_delta");
-      expect(await rt.runPromise(hasRun(1001))).toBe(true);
+      expect(await rt.runPromise(hasRun("1001"))).toBe(true);
 
-      const stopped = await rt.runPromise(stopRun(1001, "stopped"));
+      const stopped = await rt.runPromise(stopRun("1001", "stopped"));
       expect(stopped).toBe(true);
 
       const terminal = await takeEvent(rt, queue);
@@ -346,7 +348,8 @@ describe("RunRegistry — subprocess lifecycle (fake sh provider)", () => {
       }
       expect(
         await waitUntil(
-          async () => (await rt.runPromise(getRunSnapshot(1001))) === undefined
+          async () =>
+            (await rt.runPromise(getRunSnapshot("1001"))) === undefined
         )
       ).toBe(true);
     } finally {
@@ -371,7 +374,8 @@ describe("RunRegistry — subprocess lifecycle (fake sh provider)", () => {
       }
       expect(
         await waitUntil(
-          async () => (await rt.runPromise(getRunSnapshot(1002))) === undefined
+          async () =>
+            (await rt.runPromise(getRunSnapshot("1002"))) === undefined
         )
       ).toBe(true);
     } finally {
@@ -382,17 +386,17 @@ describe("RunRegistry — subprocess lifecycle (fake sh provider)", () => {
   test("(c) hasRun tracks the map lifecycle: false → true → false on natural exit", async () => {
     const rt = makeRuntime(4);
     try {
-      expect(await rt.runPromise(hasRun(1003))).toBe(false);
+      expect(await rt.runPromise(hasRun("1003"))).toBe(false);
       await rt.runPromise(
         startRun(makeSpec("echo hi; sleep 0.1"), makeOpts(1003))
       );
-      expect(await rt.runPromise(hasRun(1003))).toBe(true);
+      expect(await rt.runPromise(hasRun("1003"))).toBe(true);
       // Fiber completes on natural exit → FiberMap auto-removes the entry.
       const cleared = await waitUntil(
-        async () => !(await rt.runPromise(hasRun(1003)))
+        async () => !(await rt.runPromise(hasRun("1003")))
       );
       expect(cleared).toBe(true);
-      expect(await rt.runPromise(getRunSnapshot(1003))).toBeUndefined();
+      expect(await rt.runPromise(getRunSnapshot("1003"))).toBeUndefined();
     } finally {
       await rt.dispose();
     }
@@ -411,11 +415,11 @@ describe("RunRegistry — subprocess lifecycle (fake sh provider)", () => {
       // are running at the same time.
       expect((await takeEvent(rt, q1)).kind).toBe("text_delta");
       expect((await takeEvent(rt, q2)).kind).toBe("text_delta");
-      expect(await rt.runPromise(hasRun(2001))).toBe(true);
-      expect(await rt.runPromise(hasRun(2002))).toBe(true);
+      expect(await rt.runPromise(hasRun("2001"))).toBe(true);
+      expect(await rt.runPromise(hasRun("2002"))).toBe(true);
 
-      await rt.runPromise(stopRun(2001, "stopped"));
-      await rt.runPromise(stopRun(2002, "stopped"));
+      await rt.runPromise(stopRun("2001", "stopped"));
+      await rt.runPromise(stopRun("2002", "stopped"));
     } finally {
       await rt.dispose();
     }
@@ -441,9 +445,9 @@ describe("RunRegistry — subprocess lifecycle (fake sh provider)", () => {
         expect(terminal.message).toBe("Busy, try again shortly.");
       }
       // The incumbent run was untouched by the capacity rejection.
-      expect(await rt.runPromise(hasRun(3001))).toBe(true);
+      expect(await rt.runPromise(hasRun("3001"))).toBe(true);
 
-      await rt.runPromise(stopRun(3001, "stopped"));
+      await rt.runPromise(stopRun("3001", "stopped"));
     } finally {
       await rt.dispose();
     }
