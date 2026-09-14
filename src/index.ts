@@ -131,6 +131,23 @@ bot.start({
         command: "diagnostica",
         description: "Verifica configurazione, assistenti e spazio disco",
       },
+      {
+        command: "allegati",
+        description: "Cerca e gestisci gli allegati del progetto",
+      },
+      {
+        command: "preferenze",
+        description: "Impostazioni preferite per i nuovi argomenti",
+      },
+      { command: "lavori", description: "Lavori in corso e messaggi in coda" },
+      {
+        command: "aggiornamenti",
+        description: "Versione, backup e ripristino del bot",
+      },
+      {
+        command: "timeout",
+        description: "Disattiva il limite o imposta i minuti di esecuzione",
+      },
       { command: "help", description: "Guida ai comandi disponibili" },
       {
         command: "compose",

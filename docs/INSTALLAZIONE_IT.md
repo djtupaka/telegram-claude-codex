@@ -84,8 +84,9 @@ Non condividere lo stesso token fra due processi che ricevono gli aggiornamenti.
 
 ## Allegati e backup
 
-I nuovi allegati vengono conservati nell'archivio dati del bot, separati per
-progetto, conversazione e giorno UTC. Ogni nome contiene un identificativo
+I nuovi allegati vengono conservati nella cartella `telegram` del progetto,
+separati per conversazione e giorno UTC. Gli originali precedenti rimangono
+consultabili nell’archivio centrale senza migrazione automatica. Ogni nome contiene un identificativo
 univoco e una versione sicura del nome originale. Il file originale conserva
 esattamente i byte ricevuti; un manifest affiancato (`.metadata.json`) contiene
 nome originale, tipo MIME dichiarato da Telegram, identificativi Telegram,
@@ -101,3 +102,5 @@ I backup devono conservare `.env` separatamente e in modo protetto, oltre ai
 dati del bot e ai propri progetti. I manifest contengono percorsi assoluti: in
 caso di ripristino su un'altra macchina mantenere i percorsi oppure considerare
 quelli registrati come provenienza della vecchia installazione.
+
+Per gli aggiornamenti protetti e il ritorno alla versione precedente consultare [AGGIORNAMENTI.md](AGGIORNAMENTI.md). La gestione dello spazio e del backup degli allegati è descritta in [ALLEGATI.md](ALLEGATI.md).

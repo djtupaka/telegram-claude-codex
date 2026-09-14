@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { hostname } from "node:os";
 import { basename, join } from "node:path";
 import { Effect } from "effect";
@@ -33,8 +33,11 @@ import {
 import type { ProviderId } from "./agent/types";
 import { storeAttachment } from "./attachments";
 import type { AutomationTarget } from "./automations";
+import { installAttachmentManager } from "./bot-attachments";
 import { installAutomations } from "./bot-automations";
 import { type ControlTarget, installBotControls } from "./bot-controls";
+import { installBotPreferences } from "./bot-preferences";
+import { installBotTimeout } from "./bot-timeout";
 import { installDevMenu, menuReplyTransformer, menuShortcut } from "./dev-menu";
 import { collectDiagnostics, formatDiagnostics } from "./diagnostics";
 import {
@@ -54,6 +57,7 @@ import {
   UpdateReceivedEvent,
 } from "./observability";
 import { createProjectFolder } from "./project-folders";
+import { projectPreferences } from "./project-preferences";
 import { createProjectWizard } from "./project-wizard";
 import { runtime } from "./runtime";
 import {
@@ -71,6 +75,7 @@ import {
   setModel,
   topicOps,
 } from "./state";
+import { buildTaskDashboard, type DashboardTask } from "./task-dashboard";
 import {
   type StreamResult,
   sendRichMarkdown,
@@ -79,6 +84,7 @@ import {
 } from "./telegram";
 import { createTopicSession, projectLabel } from "./topics";
 import { TranscribeService } from "./transcribe";
+import { formatUpdateStatus, readUpdateStatus } from "./update-status";
 import { BOT_VERSION } from "./version-info";
 
 /**
@@ -387,6 +393,7 @@ const NT_PROJECT_RE = /^nt_project:(.+)$/;
 const NT_PROVIDER_RE = /^nt_provider:([^:]+):(claude|codex)$/;
 const COMMAND_TAIL_RE = /[\s@]/;
 const WHITESPACE_RE = /\s+/;
+const JOBS_PAGE_RE = /^jobs:(\d+)$/;
 
 /** Dismiss keyboards left by older bot versions. Navigation lives in /menu. */
 const removeReplyKeyboard = { remove_keyboard: true } as const;
@@ -525,6 +532,9 @@ export function createBot(
   allowedChatIds: readonly number[] = []
 ) {
   const bot = new Bot(token);
+  const runningRevision = readUpdateStatus(join(import.meta.dirname, ".."))
+    .then((status) => status.commit.slice(0, 12))
+    .catch(() => "non disponibile");
   bot.api.config.use(menuReplyTransformer);
   const projectWizard = createProjectWizard({
     projectsDir,
@@ -541,6 +551,8 @@ export function createBot(
     "nuovo_progetto",
     "elenco",
     "diagnostica",
+    "lavori",
+    "aggiornamenti",
   ]);
   /** Whether an update in the General area may proceed to the handlers. */
   const controlAllowed = (ctx: Context) => {
@@ -548,7 +560,11 @@ export function createBot(
       return true;
     }
     const callbackData = ctx.callbackQuery?.data ?? "";
-    if (callbackData.startsWith("nt_") || callbackData.startsWith("menu:")) {
+    if (
+      callbackData.startsWith("nt_") ||
+      callbackData.startsWith("menu:") ||
+      callbackData.startsWith("jobs:")
+    ) {
       return true;
     }
     const text = ctx.message?.text ?? "";
@@ -638,6 +654,16 @@ export function createBot(
 
   let closing = false;
   const reservedRuns = new Set<string>();
+  const runningWork = new Map<
+    string,
+    {
+      project: string;
+      provider: ProviderId;
+      prompt: string;
+      startedAt: number;
+      automatic: boolean;
+    }
+  >();
   const scopeControllers = new Map<string, AbortController>();
   const stopScope = (key: string, reason: Parameters<typeof stopAgent>[1]) => {
     const controller = scopeControllers.get(key);
@@ -671,6 +697,111 @@ export function createBot(
     }
     return targetForState(scope, getState(scope));
   };
+  const projectContext = (ctx: Context) => {
+    const scope = getScope(ctx);
+    if (scope.kind !== "private" && scope.kind !== "topic") {
+      return undefined;
+    }
+    const state = getState(scope);
+    if (!state.activeProject || state.activeProject === projectsDir) {
+      return undefined;
+    }
+    return { scope, state };
+  };
+  const sameProject = (left: string, right: string) => {
+    try {
+      return realpathSync(left) === realpathSync(right);
+    } catch {
+      return left === right;
+    }
+  };
+  const legacyAttachmentsRoot =
+    process.env.ATTACHMENTS_DIR?.trim() ||
+    process.env.UPLOADS_DIR?.trim() ||
+    join(import.meta.dirname, "..", ".data", "attachments");
+  installAttachmentManager({
+    bot,
+    context: (ctx) => {
+      const value = projectContext(ctx);
+      if (!value) {
+        return undefined;
+      }
+      return {
+        projectPath: value.state.activeProject,
+        scopeKey: value.scope.key,
+        rootDir: join(value.state.activeProject, "telegram"),
+        layout: "project",
+        legacyRootDir: legacyAttachmentsRoot,
+        backupDir: process.env.ATTACHMENTS_BACKUP_DIR?.trim(),
+        busy: [...scopeStates.values()].some(
+          (state) =>
+            busy(state.runKey) &&
+            sameProject(
+              runningWork.get(state.runKey)?.project ?? state.activeProject,
+              value.state.activeProject
+            )
+        ),
+      };
+    },
+  });
+  installBotPreferences({
+    bot,
+    getTarget: (ctx) => {
+      const value = projectContext(ctx);
+      if (!value) {
+        throw new Error("Apri un progetto per gestire le sue preferenze.");
+      }
+      const target = targetForState(value.scope, value.state);
+      return {
+        projectPath: target.project,
+        scopeKey: target.scopeKey,
+        provider: target.provider,
+        model: target.model,
+        effort: target.effort,
+      };
+    },
+  });
+  const dashboardTasks = (): DashboardTask[] =>
+    [...scopeStates.values()].map((state) => {
+      const work = runningWork.get(state.runKey);
+      const snapshot = getActiveRunSnapshot(state.runKey);
+      return {
+        chatId: state.chatId,
+        threadId: state.threadId,
+        project: basename(work?.project ?? state.activeProject) || "Generale",
+        provider: getProvider(work?.provider ?? state.activeProvider)
+          .displayName,
+        prompt: work?.prompt,
+        startedAt: snapshot?.startedAt ?? work?.startedAt,
+        lastProgressAt: snapshot?.lastProgressAt,
+        running: busy(state.runKey),
+        automatic: work?.automatic,
+        queued: state.queue.map((item) => item.prompt),
+        waitingForPlan: Boolean(state.pendingPlan),
+      };
+    });
+  const showJobs = async (ctx: Context, page = 0) => {
+    const view = buildTaskDashboard(dashboardTasks(), requireChat(ctx), page);
+    await ctx.reply(view.text, { reply_markup: view.keyboard });
+  };
+  bot.command("lavori", (ctx) => showJobs(ctx));
+  bot.callbackQuery(JOBS_PAGE_RE, async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await showJobs(ctx, Number(ctx.match[1]));
+  });
+  bot.command("aggiornamenti", async (ctx) => {
+    try {
+      const status = await readUpdateStatus(join(import.meta.dirname, ".."));
+      await ctx.reply(
+        `Versione attiva: ${await runningRevision} (bot ${BOT_VERSION})\n${formatUpdateStatus(status)}`,
+        { reply_markup: menuShortcut() }
+      );
+    } catch {
+      await ctx.reply(
+        "Stato aggiornamenti non disponibile. Usa bun run update:status dal terminale."
+      );
+    }
+  });
   bot.use((ctx, next) => {
     if (ctx.message?.text === "☰ Menu") {
       ctx.message.text = "/menu";
@@ -745,6 +876,15 @@ export function createBot(
     getTarget,
     isBusy: busy,
     activeRunId: (key) => getActiveRunSnapshot(key)?.runId,
+  });
+  installBotTimeout({
+    bot,
+    getScopeKey: (ctx) => getTarget(ctx).scopeKey,
+    store: controls.store,
+    defaultTimeoutMs:
+      process.env.RUN_TIMEOUT_MS === undefined
+        ? null
+        : Number(process.env.RUN_TIMEOUT_MS),
   });
   const refreshSummary = (ctx: Context, status?: string) => {
     const target = getTarget(ctx);
@@ -840,6 +980,13 @@ export function createBot(
       scopes.set(ctx.update, scope);
       installThreadTransformer(ctx, scope);
       reservedRuns.add(state.runKey);
+      runningWork.set(state.runKey, {
+        project: state.activeProject,
+        provider: state.activeProvider,
+        prompt,
+        startedAt: Date.now(),
+        automatic: true,
+      });
       try {
         await runSinglePrompt(ctx, prompt, state, allowedUserId, {
           signal,
@@ -847,6 +994,7 @@ export function createBot(
         });
       } finally {
         reservedRuns.delete(state.runKey);
+        runningWork.delete(state.runKey);
         scopeControllers.delete(state.runKey);
         const queued = liveState.queue.shift();
         if (queued && !closing) {
@@ -1208,9 +1356,20 @@ export function createBot(
 
   function providerKeyboard(projectName: string) {
     const keyboard = new InlineKeyboard();
+    let preferred: ProviderId | undefined;
+    try {
+      preferred = projectPreferences.get(
+        join(projectsDir, projectName)
+      )?.provider;
+    } catch {
+      /* Corrupt preference storage does not block explicit provider choice. */
+    }
     for (const provider of listProviders()) {
       keyboard
-        .text(provider.displayName, `nt_provider:${projectName}:${provider.id}`)
+        .text(
+          `${provider.id === preferred ? "★ " : ""}${provider.displayName}`,
+          `nt_provider:${projectName}:${provider.id}`
+        )
         .row();
     }
     return keyboard;
@@ -1235,8 +1394,8 @@ export function createBot(
     scopeStates.set(created.key, {
       activeProvider: created.record.activeProvider,
       activeProject: created.record.activeProject,
-      models: {},
-      efforts: {},
+      models: created.record.models ?? {},
+      efforts: created.record.efforts ?? {},
       queue: [],
       runKey: created.key,
       scopeKey: created.key,
@@ -1487,6 +1646,11 @@ export function createBot(
         "/history — riprendi una sessione precedente",
         "/new — inizia una nuova conversazione",
         "/stop — interrompi l’esecuzione in corso",
+        "/timeout — disattiva il limite o imposta i minuti per questa conversazione",
+        "/allegati — consulta e gestisci gli allegati del progetto",
+        "/preferenze — salva le impostazioni preferite del progetto",
+        "/lavori — mostra lavori e messaggi in coda",
+        "/aggiornamenti — versione, backup e ripristino",
         "/diagnostica — verifica configurazione, assistenti e spazio disco",
         "/status — mostra lo stato attuale",
         "/branch — mostra il ramo Git attuale",
@@ -2080,9 +2244,9 @@ export function createBot(
     const signal = automation
       ? AbortSignal.any([controller.signal, automation.signal])
       : controller.signal;
-    const approvalPolicy = controls.store.getSettings(
-      getScope(ctx).key
-    ).approvalPolicy;
+    const runSettings = controls.store.getSettings(getScope(ctx).key);
+    const approvalPolicy = runSettings.approvalPolicy;
+    const runTimeoutMs = runSettings.runTimeoutMs;
     if (provider === "codex" && approvalPolicy === "ask") {
       await ctx.reply(
         "Questa conversazione richiede approvazioni. Seleziona Claude con /provider oppure scegli esplicitamente /permessi automatici."
@@ -2170,6 +2334,7 @@ export function createBot(
             chatId: requireChat(ctx),
             threadId: state.threadId,
             approvalPolicy,
+            runTimeoutMs,
             readOnly: automation?.readOnly,
             persistSession: !automation,
             signal,
@@ -2369,6 +2534,13 @@ export function createBot(
       let currentCtx = ctx;
       let currentPrompt = prompt;
       while (!closing) {
+        runningWork.set(state.runKey, {
+          project: state.activeProject,
+          provider: state.activeProvider,
+          prompt: currentPrompt,
+          startedAt: Date.now(),
+          automatic: false,
+        });
         const presentedPlan = await runSinglePrompt(
           currentCtx,
           currentPrompt,
@@ -2391,6 +2563,7 @@ export function createBot(
       }
     } finally {
       reservedRuns.delete(state.runKey);
+      runningWork.delete(state.runKey);
       scopeControllers.delete(state.runKey);
       if (state.queue.length === 0) {
         await cleanupQueueStatus(state, ctx);
@@ -2646,9 +2819,10 @@ export function createBot(
     const document = ctx.message?.document;
     const stored = await storeAttachment({
       rootDir:
-        process.env.ATTACHMENTS_DIR?.trim() ||
-        process.env.UPLOADS_DIR?.trim() ||
-        join(import.meta.dirname, "..", ".data", "attachments"),
+        state.activeProject === projectsDir
+          ? legacyAttachmentsRoot
+          : join(state.activeProject, "telegram"),
+      layout: state.activeProject === projectsDir ? undefined : "project",
       projectPath: state.activeProject,
       scopeKey: getScope(ctx).key,
       originalName: filename,

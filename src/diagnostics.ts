@@ -193,12 +193,28 @@ export async function collectDiagnostics(
     ...(await Promise.all([
       directoryCheck("projects", "Progetti", options.projectsDir, true),
       directoryCheck("data", "Archivio dati", dataDir, false),
-      directoryCheck("attachments", "Archivio allegati", attachmentsDir, false),
+      directoryCheck(
+        "attachments",
+        "Archivio allegati precedente",
+        attachmentsDir,
+        false
+      ),
       diskCheck("disk-projects", "Spazio progetti", options.projectsDir),
       diskCheck("disk-data", "Spazio dati", dataDir),
-      diskCheck("disk-attachments", "Spazio allegati", attachmentsDir),
+      diskCheck(
+        "disk-attachments",
+        "Spazio allegati precedenti",
+        attachmentsDir
+      ),
     ]))
   );
+  checks.push({
+    id: "project-attachments",
+    label: "Allegati nuovi",
+    status: "info",
+    detail:
+      "Salvati in telegram dentro il progetto selezionato. I permessi di ogni singolo progetto non sono verificati da questo controllo generale.",
+  });
   const probe = dependencies.probeCommand ?? probeCommand;
   checks.push(
     ...(await Promise.all(

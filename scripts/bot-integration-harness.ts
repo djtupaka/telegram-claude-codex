@@ -40,6 +40,7 @@ const firstStarted = new Promise<void>((resolve) => {
   markStarted = resolve;
 });
 const agentPrompts: string[] = [];
+const agentOptions: RunOptions[] = [];
 mock.module(join(root, "src/agent/index.ts"), () => ({
   ...agent,
   async *runAgent(
@@ -48,6 +49,7 @@ mock.module(join(root, "src/agent/index.ts"), () => ({
   ): AsyncGenerator<AgentEvent> {
     agentCalls++;
     agentPrompts.push(options.prompt);
+    agentOptions.push(options);
     if (options.prompt === "Prima richiesta controllata") {
       markStarted();
       await firstReleased;
@@ -443,6 +445,67 @@ try {
     join(root, "demo-created")
   );
   assert.equal(storedTopics.topics["t:-100:55"].activeProvider, "claude");
+  const { storeAttachment } = await import("../src/attachments");
+  const legacyFixture = await storeAttachment({
+    rootDir: join(root, ".data", "attachments"),
+    projectPath: join(root, "demo-created"),
+    scopeKey: "t:-100:55",
+    originalName: "scheda-verificata.pdf",
+    mimeType: "application/pdf",
+    telegramFileId: "fixture",
+    data: new Uint8Array([1, 2, 3]),
+  });
+  await storeAttachment({
+    rootDir: join(root, "demo-created", "telegram"),
+    layout: "project",
+    projectPath: join(root, "demo-created"),
+    scopeKey: "t:-100:55",
+    originalName: "scheda-nuova.pdf",
+    mimeType: "application/pdf",
+    telegramFileId: "fixture2",
+    data: new Uint8Array([4, 5, 6]),
+  });
+  const beforeAttachments = calls.length;
+  await bot.handleUpdate(message("/allegati scheda", 55));
+  assert(
+    calls
+      .slice(beforeAttachments)
+      .some((c) => JSON.stringify(c.payload).includes("scheda-verificata.pdf")),
+    "Attachment search must show this project's file"
+  );
+  assert(
+    calls
+      .slice(beforeAttachments)
+      .some((c) => JSON.stringify(c.payload).includes("scheda-nuova.pdf")),
+    "Attachment view must include new project folder and old central archive"
+  );
+  const beforePreferences = calls.length;
+  await bot.handleUpdate(message("/preferenze", 55));
+  const prefButtons = calls
+    .slice(beforePreferences)
+    .flatMap((c) =>
+      (
+        (
+          c.payload.reply_markup as
+            | { inline_keyboard?: { callback_data?: string }[][] }
+            | undefined
+        )?.inline_keyboard ?? []
+      ).flat()
+    );
+  const savePreference = prefButtons.find((b) =>
+    b.callback_data?.startsWith("prefs:save:")
+  );
+  assert(savePreference?.callback_data);
+  const savePref = callback(55);
+  if (savePref.callback_query) {
+    savePref.callback_query.data = savePreference.callback_data;
+  }
+  await bot.handleUpdate(savePref);
+  const { projectPreferences } = await import("../src/project-preferences");
+  assert.equal(
+    projectPreferences.get(join(root, "demo-created"))?.provider,
+    "claude"
+  );
   const invalidProvider = callback(0);
   if (invalidProvider.callback_query) {
     invalidProvider.callback_query.data = "nt_provider:..:claude";
@@ -505,13 +568,64 @@ try {
   assert.equal(agentCalls, 0);
   assert.equal(networkCalls, 0);
   await bot.handleUpdate(message("/permessi automatici"));
+  await bot.handleUpdate(message("/timeout 2", 7));
+  await bot.handleUpdate(message("/timeout off", 8));
+  assert.equal(operations.getSettings("t:-100:7").runTimeoutMs, 120_000);
+  assert.equal(operations.getSettings("t:-100:8").runTimeoutMs, null);
+  await bot.handleUpdate(message("/timeout 30", 7, 99));
+  assert.equal(operations.getSettings("t:-100:7").runTimeoutMs, 120_000);
   const first = bot.handleUpdate(message("Prima richiesta controllata"));
   await firstStarted;
+  assert.equal(
+    agentOptions.find((o) => o.prompt === "Prima richiesta controllata")
+      ?.runTimeoutMs,
+    120_000
+  );
   await bot.handleUpdate(message("Seconda richiesta accodata"));
   assert(
     calls.some((c) =>
       String(c.payload.text).includes("Messaggio aggiunto alla coda")
     )
+  );
+  const beforeJobs = calls.length;
+  await bot.handleUpdate(message("/lavori", 0));
+  const jobsText = calls
+    .slice(beforeJobs)
+    .map((c) => String(c.payload.text))
+    .join("\n");
+  assert(jobsText.includes("Prima richiesta controllata"));
+  assert(jobsText.includes("Seconda richiesta accodata"));
+  assert(jobsText.includes("In esecuzione"));
+  const beforeArchive = calls.length;
+  await bot.handleUpdate(message("/allegati scheda-verificata", 55));
+  const archiveButtons = calls
+    .slice(beforeArchive)
+    .flatMap((c) =>
+      (
+        (
+          c.payload.reply_markup as
+            | { inline_keyboard?: { callback_data?: string }[][] }
+            | undefined
+        )?.inline_keyboard ?? []
+      ).flat()
+    );
+  const entryButton = archiveButtons.find((b) =>
+    b.callback_data?.includes(":detail:")
+  );
+  assert(entryButton?.callback_data);
+  for (const action of ["preview", "confirm"]) {
+    const update = callback(55);
+    if (update.callback_query) {
+      update.callback_query.data = entryButton.callback_data.replace(
+        ":detail:",
+        `:${action}:`
+      );
+    }
+    await bot.handleUpdate(update);
+  }
+  assert(
+    existsSync(`${legacyFixture.path}.archived.json`),
+    "A running job in another project must not block archiving this project"
   );
   stopBotOperations(bot);
   releaseFirst();

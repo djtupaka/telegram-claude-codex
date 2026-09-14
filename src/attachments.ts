@@ -4,6 +4,7 @@ import { basename, join, parse, resolve, sep } from "node:path";
 
 export interface AttachmentInput {
   data: Uint8Array;
+  layout?: "project";
   mimeType: string;
   originalName: string;
   projectPath: string;
@@ -75,11 +76,33 @@ export async function storeAttachment(
   const receivedAt = (input.receivedAt ?? new Date()).toISOString();
   const directory = join(
     resolve(input.rootDir),
-    folder(basename(projectPath), projectPath),
+    ...(input.layout === "project"
+      ? []
+      : [folder(basename(projectPath), projectPath)]),
     folder(input.scopeKey, input.scopeKey),
     receivedAt.slice(0, DATE_LENGTH)
   );
   await privateDirectory(directory);
+  if (input.layout === "project") {
+    try {
+      await writeFile(join(resolve(input.rootDir), ".gitignore"), "*\n", {
+        flag: "wx",
+        mode: 0o600,
+      });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
+        throw error;
+      }
+      const ignoreInfo = await lstat(
+        join(resolve(input.rootDir), ".gitignore")
+      );
+      if (!ignoreInfo.isFile() || ignoreInfo.isSymbolicLink()) {
+        throw new Error(
+          "File .gitignore non valido: collegamento simbolico o directory."
+        );
+      }
+    }
+  }
   const path = join(
     directory,
     `${randomUUID()}-${safeName(input.originalName)}`

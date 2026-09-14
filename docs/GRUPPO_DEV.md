@@ -61,13 +61,15 @@ Le statistiche partono dall'attivazione della funzione. I costi non dichiarati d
 
 ## Allegati
 
-I nuovi documenti, foto e vocali vengono conservati in:
+I nuovi documenti, foto e vocali di un progetto vengono conservati in:
 
 ```
-<radice>/<progetto-hash>/<conversazione-hash>/<AAAA-MM-GG UTC>/<uuid>-<nome sicuro>
+<progetto>/telegram/<conversazione-hash>/<AAAA-MM-GG UTC>/<uuid>-<nome sicuro>
 ```
 
-La radice è `ATTACHMENTS_DIR`, in alternativa il precedente `UPLOADS_DIR`, altrimenti `.data/attachments` del bot. Ogni file ha un manifest JSON affiancato con nome originale, progetto, conversazione, provenienza Telegram, MIME, dimensione e SHA-256. Nuovi file e manifest hanno permessi `0600`; le nuove directory `0700`. I nomi uguali non sovrascrivono allegati precedenti. Non vengono spostati o cancellati gli archivi preesistenti.
+La cartella contiene un `.gitignore` interno per evitare commit accidentali. Originale e metadati JSON rimangono affiancati; nomi uguali non sovrascrivono file precedenti. I file ricevuti senza un progetto selezionato restano nell'archivio centrale. Gli allegati precedenti non vengono spostati: `/allegati` unisce la nuova cartella con l'archivio configurato da `ATTACHMENTS_DIR`, `UPLOADS_DIR` o `.data/attachments`.
+
+Ricerca, dettagli, archiviazione reversibile e liberazione dello spazio con backup sono descritti in [ALLEGATI.md](ALLEGATI.md). La rimozione richiede un file archiviato, una conferma esplicita e un volume backup separato configurato: non viene eseguita durante questo aggiornamento.
 
 Lo script di invio conserva il nome del documento. Nei gruppi richiede sia un gruppo autorizzato sia l'identificativo di un argomento registrato (`--thread`), e conserva in `.data/deliveries` una ricevuta con SHA-256 e identificativo del messaggio. Un errore nella ricevuta dopo l'invio viene segnalato senza suggerire un reinvio automatico. I file vengono inviati soltanto su richiesta esplicita dell'utente.
 
@@ -104,3 +106,13 @@ La tastiera fissa sotto il campo di testo è rimossa. La navigazione resta nei p
 Per una nuova installazione usare `bun run setup`: procedura da terminale in italiano con token nascosti e configurazione personale. Le installazioni già configurate conservano il proprio `.env`; nessun dato di questa installazione viene trasferito automaticamente. La guida completa è in [INSTALLAZIONE_IT.md](INSTALLAZIONE_IT.md).
 
 Il pulsante **Diagnostica** e `/diagnostica` sono disponibili agli utenti autorizzati, anche nel Generale del gruppo. `bun run doctor` offre il controllo dal terminale. Il rapporto controlla configurazione, cartelle, spazio disponibile e presenza delle CLI senza avviare lavori AI, modificare progetti o esporre credenziali. La presenza di una CLI non dimostra l'accesso all'account: le verifiche non eseguite sono indicate esplicitamente.
+
+## Pannello lavori, preferenze e timeout
+
+`/lavori` e il pulsante Lavori mostrano richieste in esecuzione, durata, ultimo aggiornamento e anteprima dei messaggi in coda. Nei gruppi sono mostrati soltanto i lavori del gruppo corrente, con collegamenti agli argomenti; in privato soltanto quelli della chat privata. Le pagine si aggiornano tramite il pulsante Aggiorna e non generano nuovi lavori AI.
+
+`/preferenze` salva assistente, modello e ragionamento attuali per i nuovi argomenti dello stesso progetto. La stella nella scelta dell'assistente indica quello preferito; la scelta esplicita resta prioritaria. Dettagli in [PREFERENZE_PROGETTO.md](PREFERENZE_PROGETTO.md).
+
+In Impostazioni → Timeout si può disattivare il limite o scegliere 15, 30 o 60 minuti; `/timeout 45` imposta un valore personalizzato intero da 1 a 1440 minuti. `/timeout off` lo disattiva e `/timeout predefinito` ripristina il valore globale `RUN_TIMEOUT_MS` (disattivato se non configurato). Il limite riguarda l'intera esecuzione, si applica ai lavori successivi nella conversazione e non coincide con l'avviso di inattività.
+
+`/aggiornamenti` mostra la revisione caricata dal bot e quella nel checkout, oltre all'ultima operazione gestita. L'applicazione e il ripristino avvengono da terminale a servizio fermo: [AGGIORNAMENTI.md](AGGIORNAMENTI.md).

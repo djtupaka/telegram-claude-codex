@@ -3,6 +3,7 @@ import { basename, join } from "node:path";
 import type { Api } from "grammy";
 import { getProvider } from "./agent/registry";
 import type { ProviderId } from "./agent/types";
+import { getNewTopicPreferences } from "./project-preferences";
 import { topicKey } from "./scope";
 import { type TopicRecord, topicOps } from "./state";
 
@@ -74,6 +75,7 @@ export async function createTopicSession(
     input.provider,
     input.customName
   );
+  const preferences = getNewTopicPreferences(projectDir, input.provider);
   const topic = await input.api.createForumTopic(input.chatId, name);
   const threadId = topic.message_thread_id;
   const key = topicKey(input.chatId, threadId);
@@ -82,8 +84,7 @@ export async function createTopicSession(
     activeProvider: input.provider,
     chatId: input.chatId,
     createdAt: new Date().toISOString(),
-    efforts: {},
-    models: {},
+    ...preferences,
     name,
     threadId,
   };

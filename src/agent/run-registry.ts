@@ -123,7 +123,11 @@ const make = Effect.gen(function* () {
     const cancellableProvider = opts.signal
       ? Effect.raceFirst(cancellation(opts.signal), guardedProvider)
       : guardedProvider;
-    const producer = Option.match(cfg.runTimeoutMs, {
+    const timeout =
+      opts.runTimeoutMs === undefined
+        ? cfg.runTimeoutMs
+        : Option.fromNullishOr(opts.runTimeoutMs);
+    const producer = Option.match(timeout, {
       onNone: () => cancellableProvider,
       onSome: (timeoutMs) =>
         cancellableProvider.pipe(

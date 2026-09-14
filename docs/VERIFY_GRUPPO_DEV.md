@@ -111,3 +111,17 @@ Review indipendente: corretto il contesto del pulsante dal menu principale, che 
 Backup con ripristino e confronto byte per byte: `/home/djtupaka/projects/dev-bot/.data/backups/project-wizard-20260914T105815Z.tar.gz`. SHA-256 `3f8b1751d368e262ffa913a2fe4f0093696ac73273786226c4f9b35475bc21ff`. Attivazione mediante riavvio differito e ricevuta per commit.
 
 Typecheck, lint e diff-check finali superati; restano soltanto i due avvisi di complessità preesistenti.
+
+## Pannelli operativi, allegati per progetto e timeout
+
+Base `66660ed6a0e6767455a725b78acf7da7c0145b0f`. Aggiunti pannello `/lavori` con coda e tempi nel solo gruppo corrente, `/preferenze` per le nuove conversazioni e `/timeout` con limite disattivabile o personalizzato da 1 a 1440 minuti. Il limite viene passato al registro delle esecuzioni e conservato per conversazione; le esecuzioni già avviate mantengono quello iniziale.
+
+I nuovi allegati vanno in `<progetto>/telegram/<conversazione>/<data>/`, esclusi dai commit con `.gitignore` interno. `/allegati` consulta insieme questa cartella e l’archivio precedente senza migrazioni storiche. Archiviazione e ripristino sono reversibili; la liberazione dello spazio richiede selezione, conferma personale e backup verificato su un filesystem separato. Nessun allegato live è stato spostato o eliminato e nessun volume backup operativo è stato scelto automaticamente.
+
+RED/GREEN delle funzionalità verificato nei test mirati. Review indipendente del flusso: corretta l’interdizione degli allegati durante lavori di un progetto diverso. L’harness isolato prova i comandi reali del bot, il passaggio del timeout al runner, le preferenze, i due archivi e l’archiviazione mentre un altro progetto lavora; Telegram e agenti sono simulati e i dati sono temporanei.
+
+Backup locale di rilascio ripristinato in una directory isolata e confrontato byte per byte: `.data/backups/complete-menu-20260914T112221Z.tar.gz`, SHA-256 `ed3147c407e6520eea0e0a7062a0ef149c6cbb075eaabb881056b3b63fe17092`. Attivazione prevista tramite servizio systemd differito al termine delle esecuzioni, con ricevuta per commit; non si tratta di un deploy Coolify.
+
+Aggiornamenti protetti: CLI con controlli in checkout/HOME temporanei, backup limitato e verificato di configurazione/stato, verifica del servizio e ricevute. Review indipendente conclusa senza bloccanti dopo le correzioni a ExecStart, isolamento dell’ambiente, dimensione del backup e selezione della ricevuta di rollback. Il test con repository Git temporanei riproduce un secondo aggiornamento fallito prima del merge e verifica che il rollback precedente rimanga disponibile senza sostituire lo stato recente. Nessun aggiornamento o rollback live eseguito durante i test.
+
+Cancello finale: `bun test` **317 pass, 0 fail**, 1015 asserzioni in 51 file; `bun run typecheck`, `bun run lint` e `git diff --check` superati. Il lint riporta soltanto i due avvisi di complessità preesistenti. Non è stata eseguita una prova manuale dell’interfaccia nel client Telegram.

@@ -26,7 +26,11 @@
     "session:rotate-codex": "bun run scripts/rotate-codex-session.ts",
     "prepare": "husky",
     "setup": "bun run scripts/setup.ts --interactive",
-    "doctor": "bun run scripts/doctor.ts"
+    "doctor": "bun run scripts/doctor.ts",
+    "update:status": "bun run scripts/managed-update.ts status",
+    "update:check": "bun run scripts/managed-update.ts check",
+    "update:apply": "bun run scripts/managed-update.ts apply",
+    "update:rollback": "bun run scripts/managed-update.ts rollback"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "0.3.270",

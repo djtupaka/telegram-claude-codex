@@ -62,6 +62,8 @@ export interface RunOptions {
    * parallel (bounded by MAX_CONCURRENT_RUNS).
    */
   runKey: string;
+  /** Whole-run limit in milliseconds; null disables, undefined inherits config. */
+  runTimeoutMs?: number | null;
   sessionId?: string;
   /**
    * Session-store key override. Defaults to `projectDir`; forum topics pass a

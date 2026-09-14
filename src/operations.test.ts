@@ -164,3 +164,21 @@ test("stats calendar filter includes start and excludes the next midnight", () =
   expect(store.stats(run.scopeKey, range.since).runs).toBe(3);
   expect(() => store.stats(undefined, range.until, range.since)).toThrow();
 });
+
+test("timeouts persist off, custom and inherited settings independently", () => {
+  const path = temporary();
+  const store = makeOperationsStore(path);
+  store.patchSettings("one", { runTimeoutMs: 900_000 });
+  expect(makeOperationsStore(path).getSettings("one").runTimeoutMs).toBe(
+    900_000
+  );
+  store.patchSettings("two", { runTimeoutMs: null });
+  expect(makeOperationsStore(path).getSettings("two").runTimeoutMs).toBeNull();
+  store.patchSettings("one", { approvalPolicy: "ask" });
+  expect(store.getSettings("one").runTimeoutMs).toBe(900_000);
+  store.patchSettings("one", { runTimeoutMs: undefined });
+  expect(store.getSettings("one").runTimeoutMs).toBeUndefined();
+  for (const value of [0, -1, Number.NaN, 1.5, 86_400_001]) {
+    expect(() => store.patchSettings("one", { runTimeoutMs: value })).toThrow();
+  }
+});

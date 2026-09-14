@@ -578,3 +578,45 @@ test("stale consumer cleanup cannot stop an incumbent; matching cleanup can", as
     await rt.dispose();
   }
 });
+
+test("per-run timeout overrides the global default and off disables it", async () => {
+  const rt = makeRuntime(2, Option.some(80));
+  try {
+    const off = await rt.runPromise(
+      startRun(makeHangingSdkSpec(), {
+        ...makeOpts(8100),
+        runTimeoutMs: null,
+      })
+    );
+    await new Promise((resolve) => setTimeout(resolve, 130));
+    expect(await rt.runPromise(hasRun("8100"))).toBe(true);
+    await rt.runPromise(stopRun("8100", "stopped"));
+    const stopped = await takeEvent(rt, off);
+    expect(stopped.kind === "error" && stopped.class?._tag).toBe(
+      "AgentInterrupted"
+    );
+  } finally {
+    await rt.dispose();
+  }
+  const disabled = makeRuntime(2);
+  try {
+    const queue = await disabled.runPromise(
+      startRun(makeHangingSdkSpec(), {
+        ...makeOpts(8101),
+        runTimeoutMs: 50,
+      })
+    );
+    expect(
+      await waitUntil(
+        async () => !(await disabled.runPromise(hasRun("8101"))),
+        500
+      )
+    ).toBe(true);
+    const timeout = await takeEvent(disabled, queue);
+    expect(timeout.kind === "error" && timeout.class?._tag).toBe(
+      "AgentTimedOut"
+    );
+  } finally {
+    await disabled.dispose();
+  }
+});

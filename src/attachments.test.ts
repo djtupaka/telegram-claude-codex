@@ -1,6 +1,13 @@
 import { afterEach, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm, stat, symlink } from "node:fs/promises";
+import {
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join, relative } from "node:path";
 import { storeAttachment } from "./attachments";
@@ -65,4 +72,46 @@ test("refuses a symlink upload directory without writing outside the project", a
   const outside = await temporary();
   await symlink(outside, join(project, "archive"));
   await expect(storeAttachment(input(project))).rejects.toThrow("simbolico");
+});
+
+test("project layout stores new originals visibly below telegram by scope and day", async () => {
+  const project = await temporary();
+  const record = await storeAttachment({
+    ...input(project),
+    rootDir: join(project, "telegram"),
+    layout: "project",
+  });
+  expect(
+    relative(join(project, "telegram"), record.path).split("/").length
+  ).toBe(3);
+  expect(await readFile(record.path, "utf8")).toBe("original bytes");
+});
+
+test("project telegram folder prevents accidental versioning without editing project gitignore", async () => {
+  const project = await temporary();
+  await storeAttachment({
+    ...input(project),
+    rootDir: join(project, "telegram"),
+    layout: "project",
+  });
+  expect(await readFile(join(project, "telegram", ".gitignore"), "utf8")).toBe(
+    "*\n"
+  );
+});
+
+test("project ignore file is preserved and symlink replacement is rejected", async () => {
+  const project = await temporary();
+  const options = {
+    ...input(project),
+    rootDir: join(project, "telegram"),
+    layout: "project" as const,
+  };
+  await storeAttachment(options);
+  const ignore = join(project, "telegram", ".gitignore");
+  await writeFile(ignore, "custom*\n");
+  await storeAttachment(options);
+  expect(await readFile(ignore, "utf8")).toBe("custom*\n");
+  await rm(ignore);
+  await symlink("/etc/passwd", ignore);
+  await expect(storeAttachment(options)).rejects.toThrow("simbolico");
 });

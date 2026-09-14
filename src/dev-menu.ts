@@ -14,6 +14,8 @@ const GROUP_COMMANDS = new Set([
   "nuovo_progetto",
   "help",
   "diagnostica",
+  "lavori",
+  "aggiornamenti",
 ]);
 const SESSION_COMMANDS = new Set([
   "provider",
@@ -30,6 +32,9 @@ const SESSION_COMMANDS = new Set([
   "stop",
   "projects",
   "programmi",
+  "allegati",
+  "preferenze",
+  "timeout",
 ]);
 const SETTINGS_CALLBACK = /^(provider|model|effort|nt_|hist)/;
 
@@ -92,11 +97,13 @@ export function buildDevMenu(context: MenuContext): MenuView {
       .text("➕ Apri argomento", "menu:run:nuova")
       .text("🆕 Nuovo progetto", "menu:run:nuovo_progetto")
       .row()
-      .text("▶ Attività in corso", "menu:active:0")
+      .text("▶ Lavori", "menu:run:lavori")
       .text("🔄 Aggiorna", "menu:home")
       .row()
       .text("📌 Fissa menu", "menu:pin")
-      .text("🩺 Diagnostica", "menu:run:diagnostica");
+      .text("🩺 Diagnostica", "menu:run:diagnostica")
+      .row()
+      .text("🛠 Aggiornamenti", "menu:run:aggiornamenti");
     return {
       text: "DEV · Menu\n\nApri un argomento per lavorare sul suo progetto. Puoi tenere più lavori attivi in argomenti diversi.",
       keyboard,
@@ -118,11 +125,21 @@ export function buildDevMenu(context: MenuContext): MenuView {
   if (context.kind === "topic") {
     keyboard
       .text("📂 Altri progetti", "menu:topics:0")
-      .text("▶ Attività", "menu:active:0");
+      .text("▶ Lavori", "menu:run:lavori");
   } else {
     keyboard.text("📂 Cambia progetto", "menu:run:projects");
   }
-  keyboard.row().text("🩺 Diagnostica", "menu:run:diagnostica");
+  keyboard
+    .row()
+    .text("📎 Allegati", "menu:run:allegati")
+    .text("★ Preferenze", "menu:run:preferenze");
+  keyboard
+    .row()
+    .text("🩺 Diagnostica", "menu:run:diagnostica")
+    .text("🛠 Aggiornamenti", "menu:run:aggiornamenti");
+  if (context.kind === "private") {
+    keyboard.row().text("▶ Lavori", "menu:run:lavori");
+  }
   const text = [
     `DEV · ${context.project ?? "Sessione"}`,
     `${context.provider ?? "Assistente"} · ${context.model ?? "predefinito"}`,
@@ -247,6 +264,8 @@ function buildMenuSubpage(
         .row()
         .text("Ragionamento", "menu:run:effort")
         .text("Permessi", "menu:permissions")
+        .row()
+        .text("⏱ Timeout", "menu:run:timeout")
         .row()
         .text("↩ Menu", "menu:home"),
     };

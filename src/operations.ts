@@ -11,6 +11,8 @@ import type { ProviderId } from "./agent/types";
 export interface ScopeSettings {
   approvalPolicy: "automatic" | "ask";
   pinnedMessageId?: number;
+  /** Undefined inherits the global default; null disables the whole-run timeout. */
+  runTimeoutMs?: number | null;
 }
 export interface OperationRun {
   costUsd: number | null;
@@ -78,8 +80,23 @@ function settingsOf(value: unknown): ScopeSettings {
   ) {
     return invalid();
   }
+  if (
+    value.runTimeoutMs !== undefined &&
+    value.runTimeoutMs !== null &&
+    !(
+      typeof value.runTimeoutMs === "number" &&
+      Number.isSafeInteger(value.runTimeoutMs) &&
+      value.runTimeoutMs > 0 &&
+      value.runTimeoutMs <= 86_400_000
+    )
+  ) {
+    return invalid();
+  }
   return {
     approvalPolicy: value.approvalPolicy,
+    ...(value.runTimeoutMs !== undefined
+      ? { runTimeoutMs: value.runTimeoutMs as number | null }
+      : {}),
     ...(typeof value.pinnedMessageId === "number"
       ? { pinnedMessageId: value.pinnedMessageId }
       : {}),
