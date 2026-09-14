@@ -96,3 +96,13 @@ test("group command keyboards get a menu return while private and approvals are 
   });
   expect(JSON.stringify(output.pop())).toContain("menu:open");
 });
+
+test("diagnostics are available from every authorized menu", () => {
+  for (const kind of ["private", "topic", "control"] as const) {
+    expect(JSON.stringify(buildDevMenu({ kind }).keyboard)).toContain(
+      "menu:run:diagnostica"
+    );
+    expect(menuActionCommand(kind, "diagnostica")).toBe("diagnostica");
+  }
+  expect(menuActionCommand("denied", "diagnostica")).toBeUndefined();
+});

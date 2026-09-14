@@ -89,3 +89,13 @@ Richiesta successiva: lasciare libero lo spazio sotto il campo testo e usare il 
 RED osservato nell'harness sulla rimozione della tastiera in `/status`; GREEN dopo la correzione. Suite completa: 274 pass, 0 fail; typecheck e diff-check superati; lint con soli due avvisi di complessità preesistenti. Review indipendente senza problemi concreti.
 
 Backup ripristinato e confrontato byte per byte: `/home/djtupaka/projects/dev-bot/.data/backups/keyboard-removal-20260914T103301Z.tar.gz`. SHA-256 `6a6bc4357624c43e88114f2c38ab8685836aafbf871156e09346d9331c69c0cc`. Attivazione differita al termine delle esecuzioni, con ricevuta per il nuovo commit.
+
+## Installazione guidata e diagnostica
+
+Base `0d63783ec301b16df77ccf31b4588652a0e9945c`. Implementati `bun run setup` interattivo e `bun run doctor`; aggiunti `/diagnostica` e pulsante nei menu privato, argomento e Generale. Il wizard conserva setup automatizzato e simulazione, protegge token/chiave vocale, conferma la creazione, non sovrascrive `.env` e valida gruppi negativi. Non cambia gli accessi o i dati dell'installazione corrente.
+
+RED/GREEN per validazione gruppi, wizard e azione menu. Harness isolato verifica che utenti/gruppi non autorizzati non possano eseguire diagnostica e che pulsanti in Generale/argomento rispondano nel contesto giusto senza chiamare AI. Test PTY dell'implementer: segreti non visibili e annullamento senza scrittura. Review indipendente completata; corretto il caso Groq non dichiarato: il runtime richiede la variabile, mentre il valore vuoto disabilita i vocali. La diagnostica distingue formato locale da validità remota e presenza CLI da autenticazione.
+
+Copia pulita in `/tmp/dev-bot-fresh-install-94roqzjq`: dipendenze installate con lockfile, configurazione fittizia creata con permessi `0600`, doctor e typecheck superati con HOME separata. Nessuna copia di `.env`, `.data` o credenziali personali; nessun avvio bot o accesso remoto effettuato. Le CLI già installate nell'host sono visibili tramite PATH: questa prova non equivale a installarle su un server vuoto.
+
+Verifica finale: `bun test` **286 pass, 0 fail**, 845 assertion, 43 file. Typecheck, lint e diff-check superati; soltanto i due avvisi di complessità preesistenti. Backup ripristinato e confrontato byte per byte: `/home/djtupaka/projects/dev-bot/.data/backups/setup-doctor-20260914T104908Z.tar.gz`, SHA-256 `cabaaea9bdc4dcb457b10dfdeccf00d0c8d3d61dfa3ac86b4c7ac82999ce2251`. Rilascio tramite push main e riavvio differito con ricevuta del commit; non è un deploy Coolify.

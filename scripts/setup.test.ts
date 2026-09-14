@@ -87,3 +87,26 @@ test("CLI dry run uses an empty installation without secrets or writes", async (
   );
   expect(await readdir(directory)).toEqual([]);
 });
+
+test("group IDs must be negative safe integers", async () => {
+  const directory = await temporary();
+  for (const allowedChatIds of [
+    "123",
+    "-0",
+    "-1.5",
+    "-9007199254740992",
+    "-12,, -13",
+  ]) {
+    await expect(
+      setupInstallation({ ...input(directory), allowedChatIds })
+    ).rejects.toThrow("grupp");
+  }
+  expect(await readdir(directory)).toEqual([]);
+  await setupInstallation({
+    ...input(directory),
+    allowedChatIds: "-100123, -456",
+  });
+  expect(await readFile(join(directory, ".env"), "utf8")).toContain(
+    "ALLOWED_CHAT_IDS=-100123,-456"
+  );
+});

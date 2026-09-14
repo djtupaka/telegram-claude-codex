@@ -94,3 +94,9 @@ Per aprire la navigazione usa `/menu`; per consultare tutti i comandi usa `/help
 ## Spazio nella chat
 
 La tastiera fissa sotto il campo di testo è rimossa. La navigazione resta nei pulsanti dei messaggi e in `/menu`. Il messaggio di avvio rimuove anche la tastiera privata rimasta da versioni precedenti; `/status` e le altre risposte di servizio la rimuovono nuovamente senza ricrearla.
+
+## Installazione autonoma e diagnostica
+
+Per una nuova installazione usare `bun run setup`: procedura da terminale in italiano con token nascosti e configurazione personale. Le installazioni già configurate conservano il proprio `.env`; nessun dato di questa installazione viene trasferito automaticamente. La guida completa è in [INSTALLAZIONE_IT.md](INSTALLAZIONE_IT.md).
+
+Il pulsante **Diagnostica** e `/diagnostica` sono disponibili agli utenti autorizzati, anche nel Generale del gruppo. `bun run doctor` offre il controllo dal terminale. Il rapporto controlla configurazione, cartelle, spazio disponibile e presenza delle CLI senza avviare lavori AI, modificare progetti o esporre credenziali. La presenza di una CLI non dimostra l'accesso all'account: le verifiche non eseguite sono indicate esplicitamente.

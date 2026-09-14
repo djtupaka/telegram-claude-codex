@@ -9,7 +9,12 @@ import type { ScopeKind } from "./scope";
 const PAGE_SIZE = 10;
 const MENU_CALLBACK = /^menu:/;
 const PAGE_CALLBACK = /^menu:(topics|active):(\d+)$/;
-const GROUP_COMMANDS = new Set(["nuova", "nuovo_progetto", "help"]);
+const GROUP_COMMANDS = new Set([
+  "nuova",
+  "nuovo_progetto",
+  "help",
+  "diagnostica",
+]);
 const SESSION_COMMANDS = new Set([
   "provider",
   "model",
@@ -90,7 +95,8 @@ export function buildDevMenu(context: MenuContext): MenuView {
       .text("▶ Attività in corso", "menu:active:0")
       .text("🔄 Aggiorna", "menu:home")
       .row()
-      .text("📌 Fissa menu", "menu:pin");
+      .text("📌 Fissa menu", "menu:pin")
+      .text("🩺 Diagnostica", "menu:run:diagnostica");
     return {
       text: "DEV · Menu\n\nApri un argomento per lavorare sul suo progetto. Puoi tenere più lavori attivi in argomenti diversi.",
       keyboard,
@@ -116,6 +122,7 @@ export function buildDevMenu(context: MenuContext): MenuView {
   } else {
     keyboard.text("📂 Cambia progetto", "menu:run:projects");
   }
+  keyboard.row().text("🩺 Diagnostica", "menu:run:diagnostica");
   const text = [
     `DEV · ${context.project ?? "Sessione"}`,
     `${context.provider ?? "Assistente"} · ${context.model ?? "predefinito"}`,

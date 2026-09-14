@@ -36,6 +36,7 @@ import type { AutomationTarget } from "./automations";
 import { installAutomations } from "./bot-automations";
 import { type ControlTarget, installBotControls } from "./bot-controls";
 import { installDevMenu, menuReplyTransformer, menuShortcut } from "./dev-menu";
+import { collectDiagnostics, formatDiagnostics } from "./diagnostics";
 import {
   getCurrentBranch,
   getGitHubUrl,
@@ -534,6 +535,7 @@ export function createBot(
     "nuova",
     "nuovo_progetto",
     "elenco",
+    "diagnostica",
   ]);
   /** Whether an update in the General area may proceed to the handlers. */
   const controlAllowed = (ctx: Context) => {
@@ -903,6 +905,20 @@ export function createBot(
       return next();
     }
     await collectComposeMessage(ctx, state);
+  });
+
+  let pendingDiagnostics: Promise<string> | undefined;
+  bot.command("diagnostica", async (ctx) => {
+    const report =
+      pendingDiagnostics ??
+      collectDiagnostics({ projectsDir })
+        .then(formatDiagnostics)
+        .catch(() => "Diagnostica non riuscita. Riprova tra poco.")
+        .finally(() => {
+          pendingDiagnostics = undefined;
+        });
+    pendingDiagnostics = report;
+    await ctx.reply(await report, { reply_markup: menuShortcut() });
   });
 
   bot.command("start", async (ctx) => {
@@ -1454,6 +1470,7 @@ export function createBot(
         "/history — riprendi una sessione precedente",
         "/new — inizia una nuova conversazione",
         "/stop — interrompi l’esecuzione in corso",
+        "/diagnostica — verifica configurazione, assistenti e spazio disco",
         "/status — mostra lo stato attuale",
         "/branch — mostra il ramo Git attuale",
         "/pr — elenca le richieste di modifica aperte",

@@ -127,6 +127,10 @@ bot.start({
       { command: "eventi", description: "Collega le notifiche dei servizi" },
       { command: "branch", description: "Mostra il ramo Git corrente" },
       { command: "pr", description: "Elenca le richieste di modifica aperte" },
+      {
+        command: "diagnostica",
+        description: "Verifica configurazione, assistenti e spazio disco",
+      },
       { command: "help", description: "Guida ai comandi disponibili" },
       {
         command: "compose",

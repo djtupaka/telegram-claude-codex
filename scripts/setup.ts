@@ -2,6 +2,7 @@ import { lstat, mkdir, writeFile } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 
 export interface SetupOptions {
+  allowedChatIds?: string;
   directory: string;
   dryRun?: boolean;
   groqApiKey?: string;
@@ -16,6 +17,7 @@ export interface SetupResult {
 }
 
 const TOKEN = /^\d+:[A-Za-z0-9_-]+$/;
+const GROUP_ID = /^-[1-9]\d*$/;
 const USER_ID = /^[1-9]\d*$/;
 const UNSAFE_ENV = /[\r\n\0"\\$`]/;
 
@@ -44,6 +46,18 @@ export async function setupInstallation(
   if (UNSAFE_ENV.test(options.groqApiKey ?? "")) {
     throw new Error("Chiave vocale non valida.");
   }
+  const groupIds = options.allowedChatIds?.trim()
+    ? options.allowedChatIds.split(",").map((id) => id.trim())
+    : [];
+  if (
+    groupIds.some(
+      (id) => !(GROUP_ID.test(id) && Number.isSafeInteger(Number(id)))
+    )
+  ) {
+    throw new Error(
+      "ID gruppo non valido: usare interi negativi separati da virgole."
+    );
+  }
   const envPath = join(resolve(options.directory), ".env");
   try {
     await lstat(envPath);
@@ -65,6 +79,7 @@ export async function setupInstallation(
     `BOT_TOKEN="${options.token}"`,
     `ALLOWED_USER_ID=${options.userId}`,
     `PROJECTS_DIR="${result.projectsDir}"`,
+    ...(groupIds.length ? [`ALLOWED_CHAT_IDS=${groupIds.join(",")}`] : []),
     `GROQ_API_KEY="${options.groqApiKey ?? ""}"`,
     "",
   ].join("\n");
@@ -77,27 +92,54 @@ export async function setupInstallation(
 if (import.meta.main) {
   const args = process.argv.slice(2);
   const dryRun = args.includes("--dry-run");
-  if (args.some((arg) => arg !== "--dry-run")) {
+  if (args.some((arg) => arg !== "--dry-run" && arg !== "--interactive")) {
     console.error(
-      "Uso: bun run scripts/setup.ts [--dry-run]. Configurare SETUP_BOT_TOKEN, SETUP_USER_ID e SETUP_PROJECTS_DIR nell'ambiente."
+      "Uso: bun run scripts/setup.ts [--interactive] [--dry-run]. Configurare SETUP_BOT_TOKEN, SETUP_USER_ID e SETUP_PROJECTS_DIR nell'ambiente."
     );
     process.exitCode = 1;
   } else {
     try {
-      const result = await setupInstallation({
-        directory: process.cwd(),
-        token: process.env.SETUP_BOT_TOKEN ?? (dryRun ? "123456:dry-run" : ""),
-        userId: process.env.SETUP_USER_ID ?? (dryRun ? "123456" : ""),
-        projectsDir:
-          process.env.SETUP_PROJECTS_DIR ??
-          join(process.env.HOME ?? process.cwd(), "projects"),
-        groqApiKey: process.env.SETUP_GROQ_API_KEY,
-        dryRun,
-      });
-      console.log(
-        `${result.dryRun ? "Simulazione, nessun file scritto" : "Configurazione creata"}: ${result.envPath}`
+      const defaultProjectsDir = join(
+        process.env.HOME ?? process.cwd(),
+        "projects"
       );
-      console.log(`Cartella progetti: ${result.projectsDir}`);
+      const { runSetupWizard, terminalPrompt } = await import("./setup-wizard");
+      const result = args.includes("--interactive")
+        ? await runSetupWizard({
+            directory: process.cwd(),
+            defaultProjectsDir,
+            dryRun,
+            prompt: terminalPrompt,
+          })
+        : await setupInstallation({
+            directory: process.cwd(),
+            token:
+              process.env.SETUP_BOT_TOKEN ?? (dryRun ? "123456:dry-run" : ""),
+            userId: process.env.SETUP_USER_ID ?? (dryRun ? "123456" : ""),
+            projectsDir:
+              process.env.SETUP_PROJECTS_DIR ??
+              join(process.env.HOME ?? process.cwd(), "projects"),
+            groqApiKey: process.env.SETUP_GROQ_API_KEY,
+            allowedChatIds: process.env.SETUP_ALLOWED_CHAT_IDS,
+            dryRun,
+          });
+      if (result) {
+        console.log(
+          `${result.dryRun ? "Simulazione, nessun file scritto" : "Configurazione creata"}: ${result.envPath}`
+        );
+        console.log(`Cartella progetti: ${result.projectsDir}`);
+        if (!result.dryRun) {
+          console.log(
+            "Accesso provider con lo stesso utente di sistema: avviare claude e completare il login; per Codex eseguire codex login. Il provider iniziale è Claude; usare /provider per cambiarlo dopo l'avvio."
+          );
+          console.log(
+            "Poi eseguire bun run doctor e bun run start. Guida: docs/INSTALLAZIONE_IT.md"
+          );
+        }
+      } else {
+        console.log("Configurazione annullata, nessun file scritto.");
+        process.exitCode = 0;
+      }
     } catch (error) {
       console.error(
         error instanceof Error ? error.message : "Configurazione non riuscita."

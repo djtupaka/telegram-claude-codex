@@ -66,6 +66,14 @@ mock.module(join(root, "src/git.ts"), () => ({
   ...git,
   getCurrentBranch: () => "test",
 }));
+let diagnosticsCalls = 0;
+mock.module(join(root, "src/diagnostics.ts"), () => ({
+  collectDiagnostics: () => {
+    diagnosticsCalls++;
+    return Promise.resolve({});
+  },
+  formatDiagnostics: () => "Diagnostica · verifica isolata",
+}));
 const { createBot, stopBotOperations } = await import("../src/bot");
 const { makeOperationsStore } = await import("../src/operations");
 mkdirSync(join(root, ".data"), { recursive: true });
@@ -163,6 +171,32 @@ function callback(thread = 7, user = 42, chat = -100): Update {
   };
 }
 try {
+  await bot.handleUpdate(message("/diagnostica", 7, 999));
+  await bot.handleUpdate(message("/diagnostica", 7, 42, -999));
+  assert.equal(
+    diagnosticsCalls,
+    0,
+    "Diagnostics must reject unauthorized users and groups"
+  );
+  for (const thread of [0, 7]) {
+    const before = calls.length;
+    const update = callback(thread);
+    if (update.callback_query) {
+      update.callback_query.data = "menu:run:diagnostica";
+    }
+    await bot.handleUpdate(update);
+    assert(
+      calls
+        .slice(before)
+        .some(
+          (c) =>
+            c.payload.text === "Diagnostica · verifica isolata" &&
+            (c.payload.message_thread_id ?? 0) === thread
+        )
+    );
+  }
+  assert.equal(diagnosticsCalls, 2);
+  assert.equal(agentCalls, 0, "Diagnostics must never start an AI run");
   const beforeStatus = calls.length;
   await bot.handleUpdate(message("/status"));
   assert(

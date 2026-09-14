@@ -21,31 +21,34 @@ opzionale e serve per trascrivere messaggi vocali.
 
 ## Configurazione guidata da terminale
 
-Dalla nuova copia del repository si può prima simulare la preparazione:
+Dalla nuova copia del repository:
 
 ```bash
-bun run scripts/setup.ts --dry-run
+bun run setup
 ```
 
-La simulazione mostra soltanto i percorsi e non scrive file. Per creare `.env`,
-usare queste istruzioni Bash: il token viene letto senza mostrarlo e non viene
-inserito nella cronologia dei comandi.
+La procedura chiede token Telegram, ID utente, cartella assoluta dei progetti,
+chiave Groq facoltativa e ID dei gruppi facoltativi. Token e chiave Groq non
+vengono mostrati sul terminale né stampati nel riepilogo. Gli ID dei gruppi devono
+essere interi negativi separati da virgole, per esempio `-1001234567890`.
+Invio sulla cartella propone `~/projects`; sui campi facoltativi li lascia vuoti.
+
+Prima di scrivere viene chiesta conferma. Rispondere `s` per procedere oppure
+premere Invio per annullare; `Ctrl+C` e `Ctrl+D` annullano anche durante le domande.
+L'annullamento non scrive file. Per provare le domande senza salvare:
 
 ```bash
-read -r -s -p 'Token del nuovo bot: ' SETUP_BOT_TOKEN
-printf '\n'
-export SETUP_BOT_TOKEN
-read -r -p 'Il tuo ID utente Telegram numerico: ' SETUP_USER_ID
-export SETUP_USER_ID
-read -r -p 'Cartella assoluta dei progetti: ' SETUP_PROJECTS_DIR
-export SETUP_PROJECTS_DIR
-bun run scripts/setup.ts
-unset SETUP_BOT_TOKEN SETUP_USER_ID SETUP_PROJECTS_DIR
+bun run setup --dry-run
 ```
 
-Per abilitare i vocali, impostare anche `SETUP_GROQ_API_KEY` con `read -r -s`
-prima del setup e rimuoverla dall'ambiente al termine. Si può anche aggiornare
-manualmente il solo valore `GROQ_API_KEY` nel proprio `.env` in seguito.
+Per automazioni resta disponibile la modalità non interattiva:
+`bun run scripts/setup.ts`. Richiede `SETUP_BOT_TOKEN` e `SETUP_USER_ID`;
+accetta `SETUP_PROJECTS_DIR` (predefinito `~/projects`), `SETUP_GROQ_API_KEY` e
+`SETUP_ALLOWED_CHAT_IDS`. Passare i segreti tramite un ambiente protetto, senza
+scriverli nella cronologia dei comandi. `bun run scripts/setup.ts --dry-run`
+mostra i percorsi senza scrivere e usa valori fittizi se token e ID non sono
+presenti. La modalità interattiva richiede un terminale e chiede sempre nuovi
+valori, senza usare credenziali già presenti nell'ambiente.
 
 Lo script crea `.env` con permessi `0600` e la cartella progetti se manca. Non
 sovrascrive mai una configurazione esistente, nemmeno tramite collegamento
@@ -57,10 +60,15 @@ automaticamente i segreti di un `.env` preesistente.
 ## Avvio e verifica
 
 ```bash
-bun run typecheck
-bun test
+bun run doctor
 bun run start
 ```
+
+`doctor` controlla la configurazione e i prerequisiti locali. La presenza di una
+CLI non conferma l'accesso all'account: completare il login separatamente.
+Il provider iniziale è Claude; se si vuole usare soltanto Codex, selezionarlo con
+`/provider` prima del primo messaggio operativo. Dopo l'avvio, `/diagnostica`
+permette di consultare i controlli dal bot senza mostrare i segreti.
 
 Aprire in privato il nuovo bot, inviare `/start`, selezionare un progetto con
 `/projects` e provare un messaggio testuale. Per creare il progetto, predisporre
