@@ -4,6 +4,7 @@ import {
   Duration,
   Effect,
   Exit,
+  Fiber,
   FiberMap,
   Layer,
   Option,
@@ -33,6 +34,18 @@ import type {
 const SHUTDOWN_GRACE = Duration.seconds(6);
 /** Backpressure bound for the per-run event queue. */
 const QUEUE_CAPACITY = 256;
+
+/** Race listener is scoped by Effect: completion removes it, abort interrupts the producer. */
+const cancellation = (signal: AbortSignal) =>
+  Effect.callback<never, AgentInterrupted>((resume) => {
+    const abort = () =>
+      resume(Effect.fail(new AgentInterrupted({ reason: "stopped" })));
+    signal.addEventListener("abort", abort, { once: true });
+    if (signal.aborted) {
+      abort();
+    }
+    return Effect.sync(() => signal.removeEventListener("abort", abort));
+  });
 
 const make = Effect.gen(function* () {
   const cfg = yield* AppConfig;
@@ -102,10 +115,18 @@ const make = Effect.gen(function* () {
       spec.kind === "sdk"
         ? streamProvider(spec, opts, queue)
         : spawnAndStream(spec, opts, queue);
+    const guardedProvider = Effect.suspend(() =>
+      opts.signal?.aborted
+        ? Effect.fail(new AgentInterrupted({ reason: "stopped" }))
+        : provider
+    );
+    const cancellableProvider = opts.signal
+      ? Effect.raceFirst(cancellation(opts.signal), guardedProvider)
+      : guardedProvider;
     const producer = Option.match(cfg.runTimeoutMs, {
-      onNone: () => provider,
+      onNone: () => cancellableProvider,
       onSome: (timeoutMs) =>
-        provider.pipe(
+        cancellableProvider.pipe(
           Effect.timeoutOrElse({
             duration: Duration.millis(timeoutMs),
             orElse: () => Effect.fail(new AgentTimedOut({})),
@@ -143,6 +164,14 @@ const make = Effect.gen(function* () {
       const queue = yield* Queue.bounded<AgentEvent, Cause.Done>(
         QUEUE_CAPACITY
       );
+      if (opts.signal?.aborted) {
+        yield* emitTerminal(
+          queue,
+          Exit.fail(new AgentInterrupted({ reason: "stopped" })),
+          opts.runKey
+        );
+        return queue;
+      }
       yield* Effect.sync(() => reasons.set(opts.runKey, "new_prompt"));
       const startedAt = Date.now();
       yield* Effect.sync(() =>
@@ -165,15 +194,24 @@ const make = Effect.gen(function* () {
    * detached so callers (grammy handlers) never block on the kill grace.
    * Returns whether a run was active.
    */
-  const stop = (key: string, reason: InterruptReason) =>
-    Effect.gen(function* () {
-      const active = yield* FiberMap.has(fibers, key);
-      if (!active) {
-        return false;
+  const stop = (key: string, reason: InterruptReason, expectedRunId?: string) =>
+    Effect.suspend(() => {
+      // Compare and capture synchronously. Interrupt the captured fiber, never
+      // re-resolve its key after a replacement may have started.
+      if (
+        expectedRunId !== undefined &&
+        activeRuns.get(key)?.runId !== expectedRunId
+      ) {
+        return Effect.succeed(false);
       }
-      yield* Effect.sync(() => reasons.set(key, reason));
-      yield* Effect.forkDetach(FiberMap.remove(fibers, key));
-      return true;
+      const fiber = FiberMap.getUnsafe(fibers, key);
+      if (Option.isNone(fiber)) {
+        return Effect.succeed(false);
+      }
+      reasons.set(key, reason);
+      return Effect.forkDetach(Fiber.interrupt(fiber.value)).pipe(
+        Effect.as(true)
+      );
     });
 
   const has = (key: string) => FiberMap.has(fibers, key);
@@ -209,8 +247,11 @@ export class RunRegistry extends Context.Service<
 /** Effect accessors — bridged to Promise-land in agent/index.ts. */
 export const startRun = (spec: ProviderSpec, opts: RunOptions) =>
   Effect.flatMap(RunRegistry, (r) => r.start(spec, opts));
-export const stopRun = (key: string, reason: InterruptReason) =>
-  Effect.flatMap(RunRegistry, (r) => r.stop(key, reason));
+export const stopRun = (
+  key: string,
+  reason: InterruptReason,
+  expectedRunId?: string
+) => Effect.flatMap(RunRegistry, (r) => r.stop(key, reason, expectedRunId));
 export const hasRun = (key: string) =>
   Effect.flatMap(RunRegistry, (r) => r.has(key));
 export const getRunSnapshot = (key: string) =>

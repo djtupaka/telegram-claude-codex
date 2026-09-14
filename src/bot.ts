@@ -1,14 +1,8 @@
-import {
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { hostname } from "node:os";
 import { basename, join } from "node:path";
 import { Effect } from "effect";
-import { Bot, type Context, InlineKeyboard, Keyboard } from "grammy";
+import { Api, Bot, Context, InlineKeyboard, Keyboard } from "grammy";
 import {
   clearSessionCache,
   getActiveRunSnapshot,
@@ -37,6 +31,10 @@ import {
   setSession,
 } from "./agent/session-store";
 import type { ProviderId } from "./agent/types";
+import { storeAttachment } from "./attachments";
+import type { AutomationTarget } from "./automations";
+import { installAutomations } from "./bot-automations";
+import { type ControlTarget, installBotControls } from "./bot-controls";
 import {
   getCurrentBranch,
   getGitHubUrl,
@@ -520,6 +518,10 @@ export function cleanupStaleState() {
   );
 }
 
+const botOperations = new WeakMap<Bot, { start(): void; stop(): void }>();
+export const startBotOperations = (bot: Bot) => botOperations.get(bot)?.start();
+export const stopBotOperations = (bot: Bot) => botOperations.get(bot)?.stop();
+
 /** Create and configure the bot */
 export function createBot(
   token: string,
@@ -613,6 +615,183 @@ export function createBot(
     await next();
   });
 
+  let closing = false;
+  const reservedRuns = new Set<string>();
+  const scopeControllers = new Map<string, AbortController>();
+  const stopScope = (key: string, reason: Parameters<typeof stopAgent>[1]) => {
+    const controller = scopeControllers.get(key);
+    controller?.abort();
+    return stopAgent(key, reason) || Boolean(controller);
+  };
+  const busy = (runKey: string) =>
+    reservedRuns.has(runKey) || hasActiveProcess(runKey);
+  const targetForState = (scope: Scope, state: UserState): ControlTarget => ({
+    scopeKey: scope.key,
+    runKey: state.runKey,
+    chatId: scope.chatId,
+    threadId: scope.threadId,
+    userId: scope.userId,
+    project: state.activeProject || projectsDir,
+    provider: state.activeProvider,
+    model: resolveModelChoice(
+      getProvider(state.activeProvider),
+      state.models[state.activeProvider]
+    ),
+    effort: resolveEffortChoice(
+      getProvider(state.activeProvider),
+      state.efforts[state.activeProvider]
+    ),
+    branch: state.activeProject ? getCurrentBranch(state.activeProject) : null,
+  });
+  const getTarget = (ctx: Context) => {
+    const scope = getScope(ctx);
+    if (scope.kind !== "private" && scope.kind !== "topic") {
+      throw new Error("Apri un argomento per usare questo comando.");
+    }
+    return targetForState(scope, getState(scope));
+  };
+  const controls = installBotControls({
+    bot,
+    getTarget,
+    isBusy: busy,
+    activeRunId: (key) => getActiveRunSnapshot(key)?.runId,
+  });
+  const refreshSummary = (ctx: Context, status?: string) => {
+    const target = getTarget(ctx);
+    return controls
+      .summary(
+        target,
+        status ?? (busy(target.runKey) ? "In esecuzione" : "Libero")
+      )
+      .catch(() =>
+        console.warn(
+          "Riepilogo argomento non aggiornato: verificare permessi Telegram."
+        )
+      );
+  };
+  const authorizedAutomationScope = (target: AutomationTarget): Scope => {
+    // Saved jobs may outlive a topic or its authorization: recheck at execution.
+    const scope: Scope = {
+      kind: target.threadId === undefined ? "private" : "topic",
+      key: target.scopeKey,
+      chatId: target.chatId,
+      threadId: target.threadId,
+      userId: allowedUserId,
+    };
+    if (scope.kind === "topic") {
+      const saved = topicOps.get(scope.key);
+      if (
+        !(allowedChats.has(scope.chatId) && saved) ||
+        saved.chatId !== scope.chatId ||
+        saved.threadId !== scope.threadId ||
+        saved.activeProject !== target.project
+      ) {
+        throw new Error(
+          "Argomento del programma non più autorizzato o progetto cambiato."
+        );
+      }
+    } else if (
+      scope.chatId !== allowedUserId ||
+      scope.key !== `u:${allowedUserId}`
+    ) {
+      throw new Error("Destinazione del programma non autorizzata.");
+    }
+    return scope;
+  };
+  const automations = installAutomations({
+    bot,
+    getTarget,
+    validateTarget: (target) => {
+      authorizedAutomationScope(target);
+    },
+    eventsPort: process.env.EVENTS_PORT
+      ? Number(process.env.EVENTS_PORT)
+      : undefined,
+    eventsToken: process.env.EVENTS_TOKEN,
+    isBusy: (key) =>
+      busy(key.startsWith("u:") ? key.slice(2) : key) ||
+      Boolean(scopeStates.get(key)?.pendingPlan),
+    run: async (target: AutomationTarget, prompt, signal, readOnly) => {
+      if (closing) {
+        throw new Error("Bot in arresto.");
+      }
+      const scope = authorizedAutomationScope(target);
+      const liveState = getState(scope);
+      const state = {
+        ...liveState,
+        activeProject: target.project,
+        activeProvider: target.provider,
+        models: { [target.provider]: target.model },
+        efforts: { [target.provider]: target.effort },
+        queue: [],
+      };
+      if (busy(state.runKey) || liveState.pendingPlan || signal.aborted) {
+        throw new Error("Conversazione occupata o programma annullato.");
+      }
+      const ctx = new Context(
+        {
+          update_id: 0,
+          message: {
+            message_id: 0,
+            date: Math.floor(Date.now() / 1000),
+            text: prompt,
+            chat:
+              scope.kind === "topic"
+                ? { id: scope.chatId, type: "supergroup", title: "Dev" }
+                : { id: scope.chatId, type: "private", first_name: "Utente" },
+            from: { id: allowedUserId, is_bot: false, first_name: "Utente" },
+            is_topic_message: scope.kind === "topic",
+            message_thread_id: scope.threadId,
+          },
+        },
+        new Api(token),
+        bot.botInfo
+      );
+      scopes.set(ctx.update, scope);
+      installThreadTransformer(ctx, scope);
+      reservedRuns.add(state.runKey);
+      try {
+        await runSinglePrompt(ctx, prompt, state, allowedUserId, {
+          signal,
+          readOnly,
+        });
+      } finally {
+        reservedRuns.delete(state.runKey);
+        scopeControllers.delete(state.runKey);
+        const queued = liveState.queue.shift();
+        if (queued && !closing) {
+          runAndDrain(
+            queued.ctx,
+            queued.prompt,
+            liveState,
+            allowedUserId
+          ).catch(() => console.error("Ripresa della coda non riuscita."));
+        }
+      }
+    },
+  });
+  botOperations.set(bot, {
+    start: () => automations.start(),
+    stop: () => {
+      closing = true;
+      for (const state of scopeStates.values()) {
+        state.queue = [];
+      }
+      automations.stop();
+      controls.stop();
+      for (const controller of scopeControllers.values()) {
+        controller.abort();
+      }
+    },
+  });
+  bot.use(async (ctx, next) => {
+    await next();
+    const scope = getScope(ctx);
+    if (scope.kind === "topic") {
+      await refreshSummary(ctx);
+    }
+  });
+
   const buttonToCommand: Record<string, string> = {
     Projects: "/projects",
     History: "/history",
@@ -688,9 +867,9 @@ export function createBot(
       return;
     }
     const state = getState(getScope(ctx));
-    const wasRunning = hasActiveProcess(state.runKey);
+    const wasRunning = busy(state.runKey);
     if (wasRunning) {
-      stopAgent(state.runKey, "switched");
+      stopScope(state.runKey, "switched");
     }
     // setActiveProvider mutates state.activeProvider in place and persists
     setActiveProvider(state, chosen);
@@ -852,6 +1031,9 @@ export function createBot(
 
     const state = getState(getScope(ctx));
     const chatId = requireChat(ctx);
+    if (busy(state.runKey)) {
+      stopScope(state.runKey, "switched");
+    }
     setActiveProject(state, fullPath);
     state.queue = [];
     state.pendingPlan = undefined;
@@ -1068,7 +1250,7 @@ export function createBot(
       return;
     }
     const state = getState(scope);
-    stopAgent(state.runKey, "stopped");
+    stopScope(state.runKey, "stopped");
     state.queue = [];
     state.pendingPlan = undefined;
     state.composeMessages = undefined;
@@ -1086,7 +1268,7 @@ export function createBot(
 
   bot.command("stop", async (ctx) => {
     const state = getState(getScope(ctx));
-    const stopped = stopAgent(state.runKey, "stopped");
+    const stopped = stopScope(state.runKey, "stopped");
     const hadQueue = state.queue.length > 0;
     state.queue = [];
     state.pendingPlan = undefined;
@@ -1153,6 +1335,13 @@ export function createBot(
         "/compose — start collecting messages",
         "/send — send composed messages",
         "/cancel — cancel compose mode",
+        "/permessi — approvazioni per questa conversazione",
+        "/stats — tempi, costi disponibili ed esiti",
+        "/riepilogo — aggiorna il riepilogo fissato",
+        "/programma — pianifica un lavoro",
+        "/programmi — elenco lavori programmati",
+        "/annulla_programma — annulla un programma",
+        "/eventi — collega le notifiche dei servizi",
         "/help — show this message",
         "",
         "Send any text or voice message to chat with the active coding agent in the active project.",
@@ -1243,7 +1432,7 @@ export function createBot(
     // Interrupt any in-flight run first: otherwise its session_init/result tap
     // would re-persist the session id right after we clear it, so /new would
     // fail to start a fresh conversation.
-    stopAgent(state.runKey, "stopped");
+    stopScope(state.runKey, "stopped");
     await runtime.runPromise(
       clearSession(
         sessionProjectKey(state.scopeKey, state.activeProject),
@@ -1475,7 +1664,7 @@ export function createBot(
 
   bot.callbackQuery(FORCE_SEND_RE, async (ctx) => {
     const state = getState(getScope(ctx));
-    const stopped = stopAgent(state.runKey, "new_prompt");
+    const stopped = stopScope(state.runKey, "new_prompt");
     await ctx.answerCallbackQuery({
       text: stopped ? "Stopping current task..." : "No active process",
     });
@@ -1677,7 +1866,7 @@ export function createBot(
       return;
     }
 
-    if (hasActiveProcess(state.runKey)) {
+    if (busy(state.runKey)) {
       state.queue.push({ prompt, ctx });
       await sendOrUpdateQueueStatus(ctx, state);
       return;
@@ -1691,30 +1880,49 @@ export function createBot(
     ctx: Context,
     prompt: string,
     state: UserState,
-    userId: number
+    userId: number,
+    automation?: { signal: AbortSignal; readOnly: boolean }
   ) {
-    const sessionId = await runtime.runPromise(
-      getSession(
-        sessionProjectKey(state.scopeKey, state.activeProject),
-        state.activeProvider
-      )
-    );
-    const projectName =
-      state.activeProject === projectsDir
-        ? "general"
-        : basename(state.activeProject);
-    const branchName =
-      state.activeProject !== projectsDir
-        ? getCurrentBranch(state.activeProject)
-        : null;
-
     const provider = state.activeProvider;
     const project = state.activeProject;
     const providerSpec = getProvider(provider);
     const model = resolveModelChoice(providerSpec, state.models[provider]);
     const effort = resolveEffortChoice(providerSpec, state.efforts[provider]);
+    const controller = new AbortController();
+    scopeControllers.set(state.runKey, controller);
+    const signal = automation
+      ? AbortSignal.any([controller.signal, automation.signal])
+      : controller.signal;
+    const approvalPolicy = controls.store.getSettings(
+      getScope(ctx).key
+    ).approvalPolicy;
+    if (provider === "codex" && approvalPolicy === "ask") {
+      await ctx.reply(
+        "Questa conversazione richiede approvazioni. Seleziona Claude con /provider oppure scegli esplicitamente /permessi automatici."
+      );
+      scopeControllers.delete(state.runKey);
+      if (automation) {
+        throw new Error("Codex non supporta le approvazioni Telegram.");
+      }
+      return false;
+    }
+    const sessionId = automation
+      ? undefined
+      : await runtime.runPromise(
+          getSession(sessionProjectKey(state.scopeKey, project), provider)
+        );
+    const projectName = project === projectsDir ? "general" : basename(project);
+    const branchName =
+      project !== projectsDir ? getCurrentBranch(project) : null;
+
     const resumedSession = Boolean(sessionId);
 
+    const startedAt = Date.now();
+    await refreshSummary(
+      ctx,
+      automation ? "Automazione in esecuzione" : "In esecuzione"
+    );
+    let lastOutcome: RunRecord["outcome"] = "done";
     const outcome = await runWithAstraStartupFallback({
       provider,
       model,
@@ -1739,8 +1947,18 @@ export function createBot(
         };
         let result: StreamResult = { observableWorkStarted: false };
         let presentedPlan = false;
-
+        const attemptStartedAt = Date.now();
+        const abort = () => {
+          controls.approvals.cancelRun(meta.runId);
+          if (getActiveRunSnapshot(state.runKey)?.runId === meta.runId) {
+            stopAgent(state.runKey, "stopped");
+          }
+        };
+        signal.addEventListener("abort", abort, { once: true });
         try {
+          if (signal.aborted) {
+            throw new Error("Esecuzione annullata.");
+          }
           await emitLifecycleEvent(
             new RunStartedEvent({
               ts: new Date().toISOString(),
@@ -1763,6 +1981,28 @@ export function createBot(
             prompt,
             projectDir: project,
             chatId: requireChat(ctx),
+            threadId: state.threadId,
+            approvalPolicy,
+            readOnly: automation?.readOnly,
+            persistSession: !automation,
+            signal,
+            requestApproval: (request) =>
+              controls.approvals.request(
+                {
+                  userId,
+                  chatId: requireChat(ctx),
+                  threadId: state.threadId,
+                  runId: meta.runId,
+                  runKey: state.runKey,
+                },
+                request,
+                async (approval) => {
+                  await ctx.reply(approval.text, {
+                    parse_mode: "HTML",
+                    reply_markup: approval.replyMarkup,
+                  });
+                }
+              ),
             runId: meta.runId,
             sessionId: attempt.fallbackAttempted ? undefined : sessionId,
             model: attempt.model,
@@ -1789,7 +2029,13 @@ export function createBot(
 
           if (result.planPath && getCapabilities(provider).planMode) {
             stopAgent(state.runKey, "stopped");
-            await presentPlan(ctx, userId, state, result);
+            if (automation) {
+              await ctx.reply(
+                "L'automazione ha prodotto un piano e si è fermata senza eseguirlo. Riprendi il lavoro con un messaggio in questo argomento."
+              );
+            } else {
+              await presentPlan(ctx, userId, state, result);
+            }
             presentedPlan = true;
           }
         } catch (e) {
@@ -1801,14 +2047,39 @@ export function createBot(
           rec.errorMessage = clipError(String((e as Error)?.message ?? e));
           console.error("runAndDrain error:", e);
         } finally {
+          signal.removeEventListener("abort", abort);
+          controls.approvals.cancelRun(meta.runId);
+          if (signal.aborted) {
+            rec.outcome = "interrupted";
+          }
+          lastOutcome = rec.outcome;
           await emitRunEvent(rec, meta);
+          if (rec.outcome !== "already_running") {
+            try {
+              controls.store.recordRun({
+                scopeKey: getScope(ctx).key,
+                project,
+                provider,
+                runId: meta.runId,
+                startedAt: new Date(attemptStartedAt).toISOString(),
+                durationMs: rec.durationMs ?? Date.now() - attemptStartedAt,
+                costUsd: rec.costUsd,
+                totalTokens: rec.totalTokens,
+                outcome: rec.outcome,
+              });
+            } catch {
+              console.warn(
+                "Statistiche non salvate: archivio operazioni da verificare."
+              );
+            }
+          }
         }
         return { ...result, presentedPlan };
       },
       beforeFallback: async (failed) => {
         // `resumedSession` is false by classifier contract, so this can only
         // clear the newly created failed Codex session for this project.
-        if (failed.sessionId) {
+        if (failed.sessionId && !automation) {
           const cleared = await runtime.runPromise(
             clearSessionIfMatches(
               sessionProjectKey(state.scopeKey, project),
@@ -1830,6 +2101,39 @@ export function createBot(
       },
     });
 
+    if (scopeControllers.get(state.runKey) === controller) {
+      scopeControllers.delete(state.runKey);
+    }
+    await refreshSummary(
+      ctx,
+      outcome.presentedPlan
+        ? "Piano in attesa"
+        : `Esecuzione terminata (${lastOutcome})`
+    );
+    if (state.threadId !== undefined && Date.now() - startedAt >= 120_000) {
+      let label = "esecuzione terminata";
+      if (lastOutcome !== "done") {
+        label = `esecuzione terminata: ${lastOutcome}`;
+      }
+      if (outcome.presentedPlan) {
+        label = "piano in attesa";
+      }
+      await bot.api
+        .sendMessage(
+          requireChat(ctx),
+          `${projectName}: ${label}. Risultato nell'argomento ${state.threadId}.`,
+          { message_thread_id: 1 }
+        )
+        .catch(swallow);
+    }
+    if (
+      automation &&
+      (lastOutcome !== "done" ||
+        outcome.presentedPlan ||
+        automation.signal.aborted)
+    ) {
+      throw new Error("Automazione non conclusa regolarmente.");
+    }
     return outcome.presentedPlan;
   }
 
@@ -1857,28 +2161,45 @@ export function createBot(
     state: UserState,
     userId: number
   ) {
-    let currentCtx = ctx;
-    let currentPrompt = prompt;
-    while (true) {
-      const presentedPlan = await runSinglePrompt(
-        currentCtx,
-        currentPrompt,
-        state,
-        userId
-      );
-      if (presentedPlan) {
-        return;
+    if (closing) {
+      return;
+    }
+    if (reservedRuns.has(state.runKey)) {
+      state.queue.push({ prompt, ctx });
+      await sendOrUpdateQueueStatus(ctx, state);
+      return;
+    }
+    reservedRuns.add(state.runKey);
+    try {
+      let currentCtx = ctx;
+      let currentPrompt = prompt;
+      while (!closing) {
+        const presentedPlan = await runSinglePrompt(
+          currentCtx,
+          currentPrompt,
+          state,
+          userId
+        );
+        if (presentedPlan) {
+          return;
+        }
+        const next = state.queue.shift();
+        if (!next) {
+          break;
+        }
+        currentPrompt = next.prompt;
+        currentCtx = next.ctx;
+        if (state.queue.length === 0) {
+          await cleanupQueueStatus(state, currentCtx);
+        }
+        await notifyQueuedProcessing(currentCtx, currentPrompt, state);
       }
-      const next = state.queue.shift();
-      if (!next) {
-        break;
-      }
-      currentPrompt = next.prompt;
-      currentCtx = next.ctx;
+    } finally {
+      reservedRuns.delete(state.runKey);
+      scopeControllers.delete(state.runKey);
       if (state.queue.length === 0) {
-        await cleanupQueueStatus(state, currentCtx);
+        await cleanupQueueStatus(state, ctx);
       }
-      await notifyQueuedProcessing(currentCtx, currentPrompt, state);
     }
   }
 
@@ -2055,10 +2376,11 @@ export function createBot(
 
     let prompt: string;
     try {
-      const file = await ctx.getFile();
-      const url = `https://api.telegram.org/file/bot${token}/${file.file_path}`;
-      const res = await fetch(url);
-      const buffer = Buffer.from(await res.arrayBuffer());
+      const path = await saveUploadedFile(
+        ctx,
+        `voice_${ctx.message.message_id}.ogg`
+      );
+      const buffer = readFileSync(path);
 
       const status = await ctx.reply("Transcribing...", {
         reply_parameters: { message_id: ctx.message.message_id },
@@ -2103,21 +2425,36 @@ export function createBot(
       });
     }
 
-    const file = fileId ? await ctx.api.getFile(fileId) : await ctx.getFile();
-    const url = `https://api.telegram.org/file/bot${token}/${file.file_path}`;
-    const res = await fetch(url);
-    const buffer = Buffer.from(await res.arrayBuffer());
-
-    // UPLOADS_DIR (opzionale): cartella unica di staging fuori dai progetti.
-    // Se non impostata si usa il default upstream <progetto>/user-sent-files.
-    const base = process.env.UPLOADS_DIR?.trim();
-    const dir = base
-      ? join(base, new Date().toISOString().slice(0, 10))
-      : join(state.activeProject, "user-sent-files");
-    mkdirSync(dir, { recursive: true });
-    const dest = join(dir, basename(filename));
-    writeFileSync(dest, buffer);
-    return dest;
+    const download = async () => {
+      const file = fileId ? await ctx.api.getFile(fileId) : await ctx.getFile();
+      const url = `https://api.telegram.org/file/bot${token}/${file.file_path}`;
+      const res = await fetch(url, { signal: AbortSignal.timeout(60_000) });
+      if (!res.ok) {
+        throw new Error("download");
+      }
+      return { file, buffer: Buffer.from(await res.arrayBuffer()) };
+    };
+    const { file, buffer } = await download().catch(() => {
+      throw new Error("Download Telegram non riuscito. Riprova l'allegato.");
+    });
+    const document = ctx.message?.document;
+    const stored = await storeAttachment({
+      rootDir:
+        process.env.ATTACHMENTS_DIR?.trim() ||
+        process.env.UPLOADS_DIR?.trim() ||
+        join(import.meta.dirname, "..", ".data", "attachments"),
+      projectPath: state.activeProject,
+      scopeKey: getScope(ctx).key,
+      originalName: filename,
+      mimeType:
+        document?.mime_type ??
+        ctx.message?.voice?.mime_type ??
+        (ctx.message?.photo ? "image/jpeg" : "application/octet-stream"),
+      telegramFileId: file.file_id,
+      telegramFileUniqueId: file.file_unique_id,
+      data: buffer,
+    });
+    return stored.path;
   }
 
   bot.on("message:document", async (ctx) => {

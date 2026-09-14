@@ -29,7 +29,10 @@ export async function* runAgent(
       const event = exit.value;
       // Persist the session id as soon as it exists — on session_init AND result,
       // not result-only — so an interrupted run's session is still resumable.
-      if (event.kind === "session_init" || event.kind === "result") {
+      if (
+        opts.persistSession !== false &&
+        (event.kind === "session_init" || event.kind === "result")
+      ) {
         await runtime.runPromise(
           setSession({
             project: opts.sessionKey ?? opts.projectDir,
@@ -43,7 +46,7 @@ export async function* runAgent(
   } finally {
     // Consumer abandoned early (e.g. telegram broke on plan_ready) => tear the
     // producer down. No-op if it already ended.
-    runtime.runFork(stopRun(opts.runKey, "stopped"));
+    runtime.runFork(stopRun(opts.runKey, "stopped", opts.runId));
   }
 }
 

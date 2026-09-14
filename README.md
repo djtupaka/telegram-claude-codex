@@ -37,6 +37,10 @@ The same bot can also live in one Telegram supergroup with **Topics** enabled (a
 
 Seed the initial topics: `bun run scripts/topics-seed.ts <chatId> premelone:codex premelone:claude nodarr:codex nodarr:claude laura:claude homeassistant:claude coolify-setup:claude truenas:claude` (topic names use short provider tags: CC = Claude Code, CX = Codex)
 
+## Gestione del gruppo Dev
+
+La [guida italiana](docs/GRUPPO_DEV.md) descrive approvazioni per argomento, statistiche giornaliere, riepiloghi fissati, programmi, eventi e archivio degli allegati. Per un server indipendente usare la [procedura di installazione](docs/INSTALLAZIONE_IT.md).
+
 ## Prerequisites
 
 - [Bun](https://bun.sh/) runtime

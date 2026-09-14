@@ -1,8 +1,12 @@
-import { spawn } from "bun";
+import { spawn, spawnSync } from "bun";
 import { Option } from "effect";
 import { stopAll } from "./agent";
 import { getProvider } from "./agent/registry";
-import { cleanupStaleState } from "./bot";
+import {
+  cleanupStaleState,
+  startBotOperations,
+  stopBotOperations,
+} from "./bot";
 import { AppConfig } from "./config";
 import { runtime } from "./runtime";
 import { DEFAULT_PROVIDER, loadPersistedState } from "./state";
@@ -37,6 +41,14 @@ const CLEANUP_INTERVAL = 3 * 60 * 60 * 1000;
 const cfg = await runtime.runPromise(AppConfig);
 const { bot } = await runtime.runPromise(BotService);
 const userId = cfg.allowedUserId;
+const revisionResult = spawnSync(["git", "rev-parse", "--short=12", "HEAD"], {
+  cwd: new URL("..", import.meta.url).pathname,
+  stderr: "ignore",
+});
+const revision =
+  revisionResult.exitCode === 0
+    ? revisionResult.stdout.toString().trim()
+    : "non disponibile";
 
 bot.catch((err) => {
   console.error("Bot error:", err);
@@ -53,6 +65,7 @@ const shutdown = async () => {
   if (cleanupTimer) {
     clearInterval(cleanupTimer);
   }
+  stopBotOperations(bot);
   await stopAll();
   // Disposing the runtime runs BotService's finalizer (bot.stop()) exactly once.
   await runtime.dispose();
@@ -64,7 +77,8 @@ process.on("SIGINT", shutdown);
 
 bot.start({
   onStart: () => {
-    console.log("Bot started");
+    startBotOperations(bot);
+    console.log(`Bot started revision ${revision}`);
     collectRuntimeVersions()
       .then((versions) =>
         console.log(`Runtime versions: ${JSON.stringify(versions)}`)
@@ -88,6 +102,16 @@ bot.start({
       { command: "new", description: "Start fresh conversation" },
       { command: "stop", description: "Kill active process" },
       { command: "status", description: "Show current state" },
+      {
+        command: "permessi",
+        description: "Approva ogni strumento o esegui automaticamente",
+      },
+      { command: "stats", description: "Tempi, costi disponibili ed esiti" },
+      { command: "riepilogo", description: "Aggiorna il riepilogo fissato" },
+      { command: "programma", description: "Pianifica un lavoro" },
+      { command: "programmi", description: "Elenco lavori programmati" },
+      { command: "annulla_programma", description: "Annulla un programma" },
+      { command: "eventi", description: "Collega le notifiche dei servizi" },
       { command: "branch", description: "Show current git branch" },
       { command: "pr", description: "List open pull requests" },
       { command: "help", description: "Show available commands" },
@@ -118,7 +142,7 @@ bot.start({
     bot.api
       .sendMessage(
         userId,
-        `Bot started at ${new Date().toLocaleString()}\nProvider: ${providerName}`
+        `Bot started at ${new Date().toLocaleString()}\nProvider: ${providerName}\nRevisione: ${revision}`
       )
       .catch((e) => console.error("Failed to send startup message:", e));
   },

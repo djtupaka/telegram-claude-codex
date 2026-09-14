@@ -13,3 +13,7 @@ describe("buildFileSystemPrompt", () => {
     expect(prompt).not.toContain("telegram-secret");
   });
 });
+
+test("topic destination is explicit in the file sender instruction", () => {
+  expect(buildFileSystemPrompt(-100, 12)).toContain("--chat -100 --thread 12");
+});

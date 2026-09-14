@@ -1,4 +1,5 @@
 import type { Cause, Queue } from "effect";
+import type { ToolApprovalRequest } from "../approvals";
 import type { AgentError } from "./errors";
 
 /** Supported coding-agent provider identifiers */
@@ -42,13 +43,17 @@ export type EventQueue = Queue.Queue<AgentEvent, Cause.Done>;
 
 /** Options passed to a provider run, normalized across providers */
 export interface RunOptions {
+  approvalPolicy?: "automatic" | "ask";
   chatId: number;
   /** Reasoning-effort override; `undefined` or `"default"` uses the provider default. */
   effort?: string;
   /** Model override; `undefined` or `"default"` uses the provider default. */
   model?: string;
+  persistSession?: boolean;
   projectDir: string;
   prompt: string;
+  readOnly?: boolean;
+  requestApproval?: (request: ToolApprovalRequest) => Promise<boolean>;
   /** Correlation id shared by lifecycle telemetry and the active-run registry. */
   runId: string;
   /**
@@ -63,6 +68,8 @@ export interface RunOptions {
    * topic-scoped key so two scopes on the same project never share a session.
    */
   sessionKey?: string;
+  signal?: AbortSignal;
+  threadId?: number;
   userId: number;
 }
 

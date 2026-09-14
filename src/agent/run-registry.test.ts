@@ -453,3 +453,126 @@ describe("RunRegistry — subprocess lifecycle (fake sh provider)", () => {
     }
   }, 15_000);
 });
+
+describe("RunRegistry external cancellation", () => {
+  test("already aborted input never starts the SDK or replaces an incumbent", async () => {
+    const rt = makeRuntime(2);
+    let started = false;
+    const controller = new AbortController();
+    controller.abort();
+    try {
+      await rt.runPromise(startRun(makeHangingSdkSpec(), makeOpts(7000)));
+      const spec: ProviderSpec = {
+        id: "codex",
+        kind: "sdk",
+        async *run() {
+          started = true;
+          yield { kind: "text_delta", text: "unexpected" };
+        },
+      };
+      const queue = await rt.runPromise(
+        startRun(spec, {
+          ...makeOpts(7000),
+          runId: "cancelled",
+          signal: controller.signal,
+        })
+      );
+      const event = await takeEvent(rt, queue);
+      expect(event.kind).toBe("error");
+      expect(started).toBe(false);
+      expect((await rt.runPromise(getRunSnapshot("7000")))?.runId).toBe(
+        "run-7000"
+      );
+    } finally {
+      await rt.dispose();
+    }
+  });
+
+  test("abort during a hanging SDK settles its queue and releases the slot", async () => {
+    const rt = makeRuntime(1);
+    const controller = new AbortController();
+    let sdkAborted = false;
+    try {
+      const queue = await rt.runPromise(
+        startRun(
+          makeHangingSdkSpec(() => {
+            sdkAborted = true;
+          }),
+          { ...makeOpts(7001), signal: controller.signal }
+        )
+      );
+      controller.abort();
+      expect(
+        await waitUntil(async () => !(await rt.runPromise(hasRun("7001"))), 500)
+      ).toBe(true);
+      const event = await takeEvent(rt, queue);
+      expect(event.kind === "error" ? event.class?._tag : "wrong-event").toBe(
+        "AgentInterrupted"
+      );
+      expect(sdkAborted).toBe(true);
+      expect(await rt.runPromise(getRunSnapshot("7001"))).toBeUndefined();
+      const next = await rt.runPromise(
+        startRun(makeSpec("echo available"), makeOpts(7002))
+      );
+      expect((await takeEvent(rt, next)).kind).toBe("text_delta");
+    } finally {
+      await rt.dispose();
+    }
+  });
+
+  test("external cancellation kills CLI children and frees the registry", async () => {
+    const rt = makeRuntime(1);
+    const controller = new AbortController();
+    try {
+      const queue = await rt.runPromise(
+        startRun(makeSpec("echo live; sleep 30"), {
+          ...makeOpts(7003),
+          signal: controller.signal,
+        })
+      );
+      expect((await takeEvent(rt, queue)).kind).toBe("text_delta");
+      controller.abort();
+      expect(
+        await waitUntil(
+          async () => !(await rt.runPromise(hasRun("7003"))),
+          1000
+        )
+      ).toBe(true);
+      const terminal = await takeEvent(rt, queue);
+      expect(
+        terminal.kind === "error" ? terminal.class?._tag : "wrong-event"
+      ).toBe("AgentInterrupted");
+    } finally {
+      await rt.dispose();
+    }
+  });
+});
+
+test("stale consumer cleanup cannot stop an incumbent; matching cleanup can", async () => {
+  const rt = makeRuntime(1);
+  let aborted = false;
+  try {
+    await rt.runPromise(
+      startRun(
+        makeHangingSdkSpec(() => {
+          aborted = true;
+        }),
+        makeOpts(7010)
+      )
+    );
+    expect(
+      await rt.runPromise(stopRun("7010", "stopped", "cancelled-other-run"))
+    ).toBe(false);
+    expect(await rt.runPromise(hasRun("7010"))).toBe(true);
+    expect(aborted).toBe(false);
+    expect(await rt.runPromise(stopRun("7010", "stopped", "run-7010"))).toBe(
+      true
+    );
+    expect(
+      await waitUntil(async () => !(await rt.runPromise(hasRun("7010"))), 500)
+    ).toBe(true);
+    expect(aborted).toBe(true);
+  } finally {
+    await rt.dispose();
+  }
+});

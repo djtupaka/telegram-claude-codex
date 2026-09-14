@@ -241,16 +241,11 @@ const buildPlanModePrompt = () =>
   ].join(" ");
 
 /**
- * Compose the Codex prompt. On the first turn (no sessionId) the file-send and
- * plan-mode convention instructions are prepended; on resume the session
- * already carries them via replayed conversation context (accepted trade-off —
- * the SDK exposes no developer-instructions/system-prompt hook).
+ * Compose every turn with the current Telegram destination, including resumed
+ * sessions: old conversation context must never select another chat or topic.
  */
-const buildCodexPrompt = (opts: RunOptions) => {
-  if (opts.sessionId) {
-    return opts.prompt;
-  }
-  const prefix = `${buildFileSystemPrompt(opts.chatId)}\n\n${buildPlanModePrompt()}`;
+export const buildCodexPrompt = (opts: RunOptions) => {
+  const prefix = `${buildFileSystemPrompt(opts.chatId, opts.threadId)}\n\n${buildPlanModePrompt()}`;
   return `${prefix}\n\n${opts.prompt}`;
 };
 
@@ -308,6 +303,14 @@ async function* run(
   opts: RunOptions,
   signal: AbortSignal
 ): AsyncGenerator<AgentEvent> {
+  if (opts.approvalPolicy === "ask" || opts.readOnly) {
+    yield {
+      kind: "error",
+      message:
+        "Codex non supporta le approvazioni Telegram o la diagnosi in sola lettura. Selezionare Claude.",
+    };
+    return;
+  }
   const codex = new Codex(
     codexOptions(runtime.runSync(readExecutorMcpServers))
   );

@@ -245,16 +245,23 @@ function* handleResultMessage(msg: ResultMessage): Generator<AgentEvent> {
  * ambient ~/.claude/settings.json. `mcpServers` carries the Executor MCP server
  * when configured (undefined otherwise, so the key is simply omitted).
  */
-const buildOptions = (
+const combineRunSignal = (parent: AbortSignal, external?: AbortSignal) =>
+  external ? AbortSignal.any([parent, external]) : parent;
+
+export const buildOptions = (
   opts: RunOptions,
-  signal: AbortSignal,
+  parentSignal: AbortSignal,
   settings: Settings,
   mcpServers: Options["mcpServers"]
 ): Options => {
+  const signal = combineRunSignal(parentSignal, opts.signal);
   const abortController = new AbortController();
   signal.addEventListener("abort", () => abortController.abort(), {
     once: true,
   });
+  if (signal.aborted) {
+    abortController.abort();
+  }
   // Resolve both sentinels to controlled provider defaults. Effort overrides
   // the boot-resolved settings for this run only.
   const model = resolveModelChoice(claudeProvider, opts.model);
@@ -268,17 +275,84 @@ const buildOptions = (
     allowDangerouslySkipPermissions: true,
     abortController,
     includePartialMessages: true,
+    persistSession: opts.persistSession,
     settings: { ...settings, effortLevel: effort },
     systemPrompt: {
       type: "preset",
       preset: "claude_code",
-      append: buildFileSystemPrompt(opts.chatId),
+      append: buildFileSystemPrompt(opts.chatId, opts.threadId),
     },
   };
+  if (opts.approvalPolicy === "ask" || opts.readOnly) {
+    options.permissionMode = "default";
+    options.allowDangerouslySkipPermissions = false;
+    options.settingSources = [];
+    // Never execute ambient shell hooks or allow their decisions to override
+    // the host's per-call gate. A resumed allow rule cannot bypass PreToolUse.
+    options.settings = {
+      ...(options.settings as Settings),
+      hooks: {},
+      disableAllHooks: false,
+    };
+    const readTools = new Set(["Read", "Glob", "Grep"]);
+    if (opts.readOnly) {
+      options.tools = [...readTools];
+    }
+    options.hooks = {
+      PreToolUse: [
+        {
+          hooks: [
+            (input) => {
+              let decision: "ask" | "deny" | "allow" = "deny";
+              if (input.hook_event_name === "PreToolUse" && !signal.aborted) {
+                decision = "ask";
+                if (opts.readOnly) {
+                  decision = readTools.has(input.tool_name) ? "allow" : "deny";
+                }
+              }
+              return Promise.resolve({
+                hookSpecificOutput: {
+                  hookEventName: "PreToolUse" as const,
+                  permissionDecision: decision,
+                },
+              });
+            },
+          ],
+        },
+      ],
+    };
+    options.canUseTool = async (toolName, input, context) => {
+      const denied = {
+        behavior: "deny" as const,
+        message: "Operazione non autorizzata o richiesta scaduta.",
+      };
+      if (signal.aborted || context.signal.aborted) {
+        return denied;
+      }
+      if (opts.readOnly) {
+        return readTools.has(toolName)
+          ? { behavior: "allow", updatedInput: input }
+          : denied;
+      }
+      try {
+        const allowed = await opts.requestApproval?.({
+          toolName,
+          input,
+          toolUseId: context.toolUseID,
+          signal: AbortSignal.any([signal, context.signal]),
+        });
+        return allowed === true && !signal.aborted && !context.signal.aborted
+          ? { behavior: "allow", updatedInput: input }
+          : denied;
+      } catch {
+        return denied;
+      }
+    };
+  }
   if (model !== "default") {
     options.model = model;
   }
-  if (mcpServers) {
+  if (mcpServers && !opts.readOnly) {
     options.mcpServers = mcpServers;
   }
   if (opts.sessionId) {
@@ -309,8 +383,12 @@ const readRunConfig = Effect.all({
  */
 async function* run(
   opts: RunOptions,
-  signal: AbortSignal
+  parentSignal: AbortSignal
 ): AsyncGenerator<AgentEvent> {
+  const signal = combineRunSignal(parentSignal, opts.signal);
+  if (signal.aborted) {
+    return;
+  }
   const state: ParserState = {
     currentBlockType: null,
     lastPlanPath: "",

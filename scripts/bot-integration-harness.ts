@@ -1,0 +1,223 @@
+// biome-ignore-all lint/suspicious/noMisplacedAssertion: Standalone assertion harness executed in an isolated subprocess by bot-integration.test.ts.
+/** Invoked only by bot-integration.test.ts inside a temporary copy of src. */
+import { mock } from "bun:test";
+import assert from "node:assert/strict";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import type { Update } from "grammy/types";
+import type { AgentEvent, RunOptions } from "../src/agent/types";
+
+const root = join(import.meta.dir, "..");
+assert(
+  root.includes("dev-bot-integration-"),
+  "Harness requires an isolated temporary copy"
+);
+let networkCalls = 0;
+globalThis.fetch = (() => {
+  networkCalls++;
+  throw new Error("Network forbidden in integration harness");
+}) as unknown as typeof fetch;
+// Lifecycle telemetry is unrelated to routing; never construct config/cloud SDK resources.
+mock.module(join(root, "src/runtime.ts"), () => ({
+  runtime: {
+    runPromise: async () => undefined,
+    runFork: () => undefined,
+    runSync: () => undefined,
+  },
+}));
+const agent = await import("../src/agent");
+let agentCalls = 0;
+let releaseFirst = () => {
+  /* Replaced by controlled run. */
+};
+const firstReleased = new Promise<void>((resolve) => {
+  releaseFirst = resolve;
+});
+let markStarted = () => {
+  /* Replaced by start notification. */
+};
+const firstStarted = new Promise<void>((resolve) => {
+  markStarted = resolve;
+});
+const agentPrompts: string[] = [];
+mock.module(join(root, "src/agent/index.ts"), () => ({
+  ...agent,
+  async *runAgent(
+    _provider: string,
+    options: RunOptions
+  ): AsyncGenerator<AgentEvent> {
+    agentCalls++;
+    agentPrompts.push(options.prompt);
+    if (options.prompt === "Prima richiesta controllata") {
+      markStarted();
+      await firstReleased;
+    }
+    yield { kind: "text_delta", text: "Verifica conclusa" };
+    yield {
+      kind: "result",
+      text: "Verifica conclusa",
+      sessionId: "",
+      durationMs: 1,
+    };
+  },
+}));
+const git = await import("../src/git");
+mock.module(join(root, "src/git.ts"), () => ({
+  ...git,
+  getCurrentBranch: () => "test",
+}));
+const { createBot, stopBotOperations } = await import("../src/bot");
+const { makeOperationsStore } = await import("../src/operations");
+mkdirSync(join(root, ".data"), { recursive: true });
+const topic = (threadId: number) => ({
+  chatId: -100,
+  threadId,
+  activeProject: root,
+  activeProvider: "codex",
+  models: {},
+  efforts: {},
+  createdAt: new Date().toISOString(),
+  name: `Test ${threadId}`,
+});
+writeFileSync(
+  join(root, ".data", "topics.json"),
+  JSON.stringify({
+    version: 1,
+    topics: { "t:-100:7": topic(7), "t:-100:8": topic(8) },
+  })
+);
+const operations = makeOperationsStore(join(root, ".data", "operations.json"));
+const bot = createBot("123:test", 42, root, 0, [-100]);
+bot.botInfo = {
+  id: 123,
+  is_bot: true,
+  first_name: "Test",
+  username: "test_bot",
+  can_join_groups: true,
+  can_read_all_group_messages: true,
+  supports_inline_queries: false,
+} as typeof bot.botInfo;
+const calls: { method: string; payload: Record<string, unknown> }[] = [];
+let messageId = 100;
+bot.api.config.use((_previous, method, payload) => {
+  const p = payload as Record<string, unknown>;
+  calls.push({ method, payload: p });
+  const result =
+    method === "sendMessage"
+      ? {
+          message_id: messageId++,
+          date: 1,
+          chat: { id: p.chat_id, type: "supergroup" },
+          text: p.text,
+          message_thread_id: p.message_thread_id,
+        }
+      : true;
+  return Promise.resolve({ ok: true, result }) as never;
+});
+let updateId = 1;
+function message(text: string, thread = 7, user = 42, chat = -100): Update {
+  return {
+    update_id: updateId++,
+    message: {
+      message_id: updateId,
+      date: 1,
+      chat: { id: chat, type: "supergroup", title: "Test" },
+      from: { id: user, is_bot: false, first_name: "Test" },
+      text,
+      is_topic_message: thread > 0,
+      message_thread_id: thread || undefined,
+      entities: text.startsWith("/")
+        ? [
+            {
+              type: "bot_command",
+              offset: 0,
+              length: text.split(" ")[0]?.length ?? 0,
+            },
+          ]
+        : undefined,
+    },
+  };
+}
+function callback(thread = 7, user = 42, chat = -100): Update {
+  return {
+    update_id: updateId++,
+    callback_query: {
+      id: `callback-${updateId}`,
+      from: { id: user, is_bot: false, first_name: "Test" },
+      chat_instance: "test",
+      data: `approval:${"a".repeat(32)}:allow`,
+      message: {
+        message_id: 99,
+        date: 1,
+        chat: { id: chat, type: "supergroup", title: "Test" },
+        is_topic_message: thread > 0,
+        message_thread_id: thread || undefined,
+      },
+    },
+  };
+}
+try {
+  await bot.handleUpdate(message("/permessi chiedi"));
+  assert.equal(operations.getSettings("t:-100:7").approvalPolicy, "ask");
+  assert.equal(operations.getSettings("t:-100:8").approvalPolicy, "automatic");
+  assert(
+    calls.some(
+      (c) =>
+        c.method === "sendMessage" &&
+        c.payload.message_thread_id === 7 &&
+        String(c.payload.text).includes("aggiornati")
+    )
+  );
+  await bot.handleUpdate(message("/permessi", 8));
+  assert(String(calls.at(-1)?.payload.text).includes("automatici"));
+  assert.equal(calls.at(-1)?.payload.message_thread_id, 8);
+  await bot.handleUpdate(message("/permessi automatici", 7, 99));
+  assert.equal(operations.getSettings("t:-100:7").approvalPolicy, "ask");
+  await bot.handleUpdate(message("/permessi automatici", 7, 42, -999));
+  assert.equal(operations.getSettings("t:-100:7").approvalPolicy, "ask");
+  await bot.handleUpdate(message("/permessi chiedi", 0));
+  assert.equal(operations.getSettings("c:-100").approvalPolicy, "automatic");
+  for (const thread of [7, 8]) {
+    await bot.handleUpdate(callback(thread));
+    assert.equal(calls.at(-1)?.method, "answerCallbackQuery");
+    assert(String(calls.at(-1)?.payload.text).includes("scaduta"));
+  }
+  const answeredBefore = calls.filter(
+    (c) => c.method === "answerCallbackQuery"
+  ).length;
+  await bot.handleUpdate(callback(7, 99));
+  await bot.handleUpdate(callback(7, 42, -999));
+  await bot.handleUpdate(callback(0));
+  assert.equal(
+    calls.filter((c) => c.method === "answerCallbackQuery").length,
+    answeredBefore
+  );
+  const callsBeforePrompt = calls.length;
+  await bot.handleUpdate(message("Richiesta di verifica isolata"));
+  assert(
+    calls
+      .slice(callsBeforePrompt)
+      .some(
+        (c) =>
+          c.method === "sendMessage" &&
+          c.payload.message_thread_id === 7 &&
+          String(c.payload.text).includes("richiede approvazioni")
+      )
+  );
+  assert.equal(agentCalls, 0);
+  assert.equal(networkCalls, 0);
+  await bot.handleUpdate(message("/permessi automatici"));
+  const first = bot.handleUpdate(message("Prima richiesta controllata"));
+  await firstStarted;
+  await bot.handleUpdate(message("Seconda richiesta accodata"));
+  assert(calls.some((c) => String(c.payload.text).includes("Message queued")));
+  stopBotOperations(bot);
+  releaseFirst();
+  await first;
+  await Bun.sleep(100);
+  assert.deepEqual(agentPrompts, ["Prima richiesta controllata"]);
+  assert.equal(networkCalls, 0);
+  console.log("BOT_INTEGRATION_OK");
+} finally {
+  stopBotOperations(bot);
+}
