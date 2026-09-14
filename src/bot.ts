@@ -2,7 +2,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { hostname } from "node:os";
 import { basename, join } from "node:path";
 import { Effect } from "effect";
-import { Api, Bot, Context, InlineKeyboard, Keyboard } from "grammy";
+import { Api, Bot, Context, InlineKeyboard } from "grammy";
 import {
   clearSessionCache,
   getActiveRunSnapshot,
@@ -386,20 +386,8 @@ const NT_PROVIDER_RE = /^nt_provider:([^:]+):(claude|codex)$/;
 const COMMAND_TAIL_RE = /[\s@]/;
 const WHITESPACE_RE = /\s+/;
 
-/** Persistent reply keyboard with all commands */
-const mainKeyboard = new Keyboard()
-  .text("☰ Menu")
-  .row()
-  .text("Progetti")
-  .text("Cronologia")
-  .row()
-  .text("Interrompi")
-  .text("Nuova sessione")
-  .row()
-  .text("Componi")
-  .row()
-  .resized()
-  .persistent();
+/** Dismiss keyboards left by older bot versions. Navigation lives in /menu. */
+const removeReplyKeyboard = { remove_keyboard: true } as const;
 
 /** Extract reply-to-message text and prepend it as context (skip bot's own messages) */
 function buildPromptWithReplyContext(
@@ -927,7 +915,7 @@ export function createBot(
     const project = state.activeProject || "(nessuno)";
     await ctx.reply(
       `Assistente di sviluppo pronto.\nAssistente: ${activeProviderName(state)}\nProgetto attivo: ${project}\n\nComandi:\n/projects - cambia progetto\n/provider - scegli l’assistente di sviluppo\n/history - riprendi una sessione precedente\n/stop - interrompi l’esecuzione in corso\n/status - stato attuale\n/new - azzera la sessione`,
-      { reply_markup: mainKeyboard }
+      { reply_markup: removeReplyKeyboard }
     );
   });
 
@@ -1085,7 +1073,7 @@ export function createBot(
 
     if (!result) {
       await ctx.reply(`Nessun progetto trovato in ${projectsDir}`, {
-        reply_markup: mainKeyboard,
+        reply_markup: removeReplyKeyboard,
       });
       return;
     }
@@ -1412,7 +1400,7 @@ export function createBot(
     const msg = stopped
       ? `Esecuzione interrotta.${hadQueue ? " Coda svuotata." : ""}`
       : "Nessuna esecuzione in corso.";
-    await ctx.reply(msg, { reply_markup: mainKeyboard });
+    await ctx.reply(msg, { reply_markup: removeReplyKeyboard });
   });
 
   bot.command("status", async (ctx) => {
@@ -1448,7 +1436,7 @@ export function createBot(
 
     await ctx.reply(
       `Assistente: ${activeProviderName(state)}\nModello: ${modelLabel} · Ragionamento: ${effortLabel}\nProgetto: ${project}\nIn esecuzione: ${running}\nSessioni: ${sessionCount}${branchLine}${queueLine}${composeLine}${sessionWarning}`,
-      { reply_markup: mainKeyboard }
+      { reply_markup: removeReplyKeyboard }
     );
   });
 
@@ -1483,7 +1471,7 @@ export function createBot(
         "",
         "Invia un messaggio di testo o vocale per lavorare con l’assistente attivo sul progetto selezionato.",
       ].join("\n"),
-      { parse_mode: "HTML", reply_markup: mainKeyboard }
+      { parse_mode: "HTML", reply_markup: removeReplyKeyboard }
     );
   });
 
@@ -1493,7 +1481,7 @@ export function createBot(
       await ctx.reply(
         "Seleziona un progetto specifico: nessun progetto attivo oppure modalità Generale.",
         {
-          reply_markup: mainKeyboard,
+          reply_markup: removeReplyKeyboard,
         }
       );
       return;
@@ -1502,7 +1490,7 @@ export function createBot(
     const current = getCurrentBranch(state.activeProject);
     if (!current) {
       await ctx.reply("La cartella non è un repository Git.", {
-        reply_markup: mainKeyboard,
+        reply_markup: removeReplyKeyboard,
       });
       return;
     }
@@ -1531,7 +1519,7 @@ export function createBot(
     }
     await ctx.reply(lines.join("\n"), {
       parse_mode: "HTML",
-      reply_markup: mainKeyboard,
+      reply_markup: removeReplyKeyboard,
     });
   });
 
@@ -1541,7 +1529,7 @@ export function createBot(
       await ctx.reply(
         "Seleziona un progetto specifico: nessun progetto attivo oppure modalità Generale.",
         {
-          reply_markup: mainKeyboard,
+          reply_markup: removeReplyKeyboard,
         }
       );
       return;
@@ -1552,14 +1540,14 @@ export function createBot(
       await ctx.reply(
         "Impossibile recuperare le richieste di modifica. Verifica l’autenticazione della CLI gh.",
         {
-          reply_markup: mainKeyboard,
+          reply_markup: removeReplyKeyboard,
         }
       );
       return;
     }
     if (prs.length === 0) {
       await ctx.reply("Nessuna richiesta di modifica aperta.", {
-        reply_markup: mainKeyboard,
+        reply_markup: removeReplyKeyboard,
       });
       return;
     }
@@ -1570,7 +1558,7 @@ export function createBot(
     );
     await ctx.reply(lines.join("\n"), {
       parse_mode: "HTML",
-      reply_markup: mainKeyboard,
+      reply_markup: removeReplyKeyboard,
     });
   });
 
@@ -1596,7 +1584,7 @@ export function createBot(
     await cleanupComposeStatus(state, ctx);
     await ctx.reply(
       "Sessione azzerata. Il prossimo messaggio inizierà una nuova conversazione.",
-      { reply_markup: mainKeyboard }
+      { reply_markup: removeReplyKeyboard }
     );
   });
 
@@ -1623,7 +1611,7 @@ export function createBot(
   async function executeSend(ctx: Context, state: UserState) {
     if (!state.composeMessages) {
       await ctx.reply("La composizione non è attiva.", {
-        reply_markup: mainKeyboard,
+        reply_markup: removeReplyKeyboard,
       });
       return;
     }
@@ -1631,7 +1619,7 @@ export function createBot(
       state.composeMessages = undefined;
       await cleanupComposeStatus(state, ctx);
       await ctx.reply("Nessun messaggio da inviare. Composizione annullata.", {
-        reply_markup: mainKeyboard,
+        reply_markup: removeReplyKeyboard,
       });
       return;
     }
@@ -1647,7 +1635,7 @@ export function createBot(
   async function executeCancel(ctx: Context, state: UserState) {
     if (!state.composeMessages) {
       await ctx.reply("La composizione non è attiva.", {
-        reply_markup: mainKeyboard,
+        reply_markup: removeReplyKeyboard,
       });
       return;
     }
@@ -1655,7 +1643,7 @@ export function createBot(
     state.composeMessages = undefined;
     await cleanupComposeStatus(state, ctx);
     await ctx.reply(`Composizione annullata. Messaggi scartati: ${count}.`, {
-      reply_markup: mainKeyboard,
+      reply_markup: removeReplyKeyboard,
     });
   }
 
@@ -1757,7 +1745,7 @@ export function createBot(
 
     if (!result) {
       await ctx.reply("Nessuna sessione precedente trovata.", {
-        reply_markup: mainKeyboard,
+        reply_markup: removeReplyKeyboard,
       });
       return;
     }
@@ -1849,7 +1837,7 @@ export function createBot(
     const planPath = result.planPath;
     if (!planPath) {
       await ctx.reply("Impossibile leggere il file del piano.", {
-        reply_markup: mainKeyboard,
+        reply_markup: removeReplyKeyboard,
       });
       return;
     }
@@ -1858,7 +1846,7 @@ export function createBot(
       planContent = readFileSync(planPath, "utf-8");
     } catch {
       await ctx.reply("Impossibile leggere il file del piano.", {
-        reply_markup: mainKeyboard,
+        reply_markup: removeReplyKeyboard,
       });
       return;
     }
@@ -2007,7 +1995,7 @@ export function createBot(
       await ctx.reply(
         "Nessun progetto selezionato. Uso Generale (tutti i progetti).",
         {
-          reply_markup: mainKeyboard,
+          reply_markup: removeReplyKeyboard,
         }
       );
     }
@@ -2550,7 +2538,7 @@ export function createBot(
       await ctx.reply(
         "Nessun progetto selezionato. Uso Generale (tutti i progetti).",
         {
-          reply_markup: mainKeyboard,
+          reply_markup: removeReplyKeyboard,
         }
       );
     }
@@ -2604,7 +2592,7 @@ export function createBot(
       await ctx.reply(
         "Nessun progetto selezionato. Uso Generale (tutti i progetti).",
         {
-          reply_markup: mainKeyboard,
+          reply_markup: removeReplyKeyboard,
         }
       );
     }

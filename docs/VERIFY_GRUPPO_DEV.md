@@ -81,3 +81,11 @@ Backup ripristinato e confrontato byte per byte:
 SHA-256 `64e07ea3738810e8a459ad37a0a06cbb3608610f8b6383998c32217228b2ab4a`.
 
 Verifica finale: `bun test` **274 pass, 0 fail**, 790 assertion, 41 file; typecheck e diff-check superati, lint senza errori con i due avvisi di complessità preesistenti. Nessun messaggio di prova o argomento creato su Telegram. Attivazione del codice tramite riavvio differito e ricevuta per commit; l'elenco slash può essere aggiornato e riletto separatamente senza interrompere le esecuzioni.
+
+## Rimozione tastiera fissa
+
+Richiesta successiva: lasciare libero lo spazio sotto il campo testo e usare il menu inline. Base `716b892c2f143fbf8f3f89696b73a61e489daa2a`. Tutte le risposte che ricreavano la tastiera ora ne chiedono la rimozione; anche il messaggio di avvio elimina la tastiera privata già visualizzata. Menu inline e alias dei vecchi pulsanti conservati.
+
+RED osservato nell'harness sulla rimozione della tastiera in `/status`; GREEN dopo la correzione. Suite completa: 274 pass, 0 fail; typecheck e diff-check superati; lint con soli due avvisi di complessità preesistenti. Review indipendente senza problemi concreti.
+
+Backup ripristinato e confrontato byte per byte: `/home/djtupaka/projects/dev-bot/.data/backups/keyboard-removal-20260914T103301Z.tar.gz`. SHA-256 `6a6bc4357624c43e88114f2c38ab8685836aafbf871156e09346d9331c69c0cc`. Attivazione differita al termine delle esecuzioni, con ricevuta per il nuovo commit.

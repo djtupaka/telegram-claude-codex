@@ -168,7 +168,8 @@ bot.start({
     bot.api
       .sendMessage(
         userId,
-        `Bot avviato il ${new Date().toLocaleString("it-IT", { timeZone: "Europe/Rome" })}\nAssistente: ${providerName}\nRevisione: ${revision}`
+        `Bot avviato il ${new Date().toLocaleString("it-IT", { timeZone: "Europe/Rome" })}\nAssistente: ${providerName}\nRevisione: ${revision}`,
+        { reply_markup: { remove_keyboard: true } }
       )
       .catch((e) => console.error("Failed to send startup message:", e));
   },

@@ -90,3 +90,7 @@ I test usano provider e Telegram simulati, directory temporanee e nessuna modifi
 Le descrizioni dell'elenco che Telegram mostra digitando `/` sono in italiano, sia in privato sia nei gruppi. I nomi dei comandi restano invariati per conservare le scorciatoie esistenti. Anche i pulsanti, la guida, le impostazioni e i messaggi di servizio usano l'italiano; i nomi dei prodotti e gli identificativi dei modelli restano quelli originali. I vecchi pulsanti in inglese già presenti nella chat continuano a essere riconosciuti.
 
 Per aprire la navigazione usa `/menu`; per consultare tutti i comandi usa `/help`. I messaggi già inviati rimangono nella cronologia con il testo originale.
+
+## Spazio nella chat
+
+La tastiera fissa sotto il campo di testo è rimossa. La navigazione resta nei pulsanti dei messaggi e in `/menu`. Il messaggio di avvio rimuove anche la tastiera privata rimasta da versioni precedenti; `/status` e le altre risposte di servizio la rimuovono nuovamente senza ricrearla.

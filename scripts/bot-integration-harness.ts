@@ -163,6 +163,18 @@ function callback(thread = 7, user = 42, chat = -100): Update {
   };
 }
 try {
+  const beforeStatus = calls.length;
+  await bot.handleUpdate(message("/status"));
+  assert(
+    calls
+      .slice(beforeStatus)
+      .some(
+        (c) =>
+          (c.payload.reply_markup as { remove_keyboard?: boolean } | undefined)
+            ?.remove_keyboard === true
+      ),
+    "Status must remove the old persistent keyboard"
+  );
   // Both fresh Italian keyboards and older English keyboards remain commands.
   for (const [label, expected] of [
     ["Progetti", "Scegli un progetto"],
