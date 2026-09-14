@@ -48,6 +48,7 @@ const makeRuntime = (eventLogPath: string) => {
   const cfg = {
     botToken: Redacted.make("x"),
     allowedUserId: 1,
+    allowedChatIds: [],
     groqApiKey: Redacted.make("x"),
     projectsDir: "/tmp",
     anthropicApiKey: Option.none(),

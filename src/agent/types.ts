@@ -51,7 +51,18 @@ export interface RunOptions {
   prompt: string;
   /** Correlation id shared by lifecycle telemetry and the active-run registry. */
   runId: string;
+  /**
+   * Single-flight key for the run registry: one active run per key. Private
+   * chats use the user id; forum topics use the topic key so topics run in
+   * parallel (bounded by MAX_CONCURRENT_RUNS).
+   */
+  runKey: string;
   sessionId?: string;
+  /**
+   * Session-store key override. Defaults to `projectDir`; forum topics pass a
+   * topic-scoped key so two scopes on the same project never share a session.
+   */
+  sessionKey?: string;
   userId: number;
 }
 

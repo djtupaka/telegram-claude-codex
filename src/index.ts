@@ -94,6 +94,9 @@ bot.start({
       { command: "compose", description: "Start collecting messages" },
       { command: "send", description: "Send composed messages" },
       { command: "cancel", description: "Cancel compose mode" },
+      { command: "nuova", description: "Gruppo: nuova sessione (argomento)" },
+      { command: "chiudi", description: "Gruppo: archivia questo argomento" },
+      { command: "elenco", description: "Gruppo: elenco sessioni" },
     ];
     const scopes = [
       { type: "default" as const },

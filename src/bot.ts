@@ -55,12 +55,19 @@ import {
 } from "./observability";
 import { runtime } from "./runtime";
 import {
+  installThreadTransformer,
+  resolveScope,
+  type Scope,
+  sessionProjectKey,
+} from "./scope";
+import {
   DEFAULT_PROVIDER,
   loadPersistedState,
   setActiveProject,
   setActiveProvider,
   setEffort,
   setModel,
+  topicOps,
 } from "./state";
 import {
   type StreamResult,
@@ -68,6 +75,7 @@ import {
   splitText,
   streamToTelegram,
 } from "./telegram";
+import { createTopicSession, projectLabel } from "./topics";
 import { TranscribeService } from "./transcribe";
 import { BOT_VERSION } from "./version-info";
 
@@ -238,6 +246,8 @@ interface PendingPlan {
 interface UserState {
   activeProject: string;
   activeProvider: ProviderId;
+  /** Chat this state belongs to (private chat or group). */
+  chatId: number;
   composeMessages?: ComposeMessage[];
   composeStatusMessageId?: number;
   efforts: Partial<Record<ProviderId, string>>;
@@ -245,6 +255,11 @@ interface UserState {
   pendingPlan?: PendingPlan;
   queue: QueuedMessage[];
   queueStatusMessageId?: number;
+  /** Run-registry key: one active run per scope (private chat or topic). */
+  runKey: string;
+  /** Set for forum topics: persistence goes to topics.json, sessions get suffixed. */
+  scopeKey?: string;
+  threadId?: number;
 }
 
 /** Return a read-only context warning only for the selected Codex session. */
@@ -254,7 +269,10 @@ const statusSessionWarning = async (state: UserState) => {
   }
   try {
     const sessionId = await runtime.runPromise(
-      getSession(state.activeProject, state.activeProvider)
+      getSession(
+        sessionProjectKey(state.scopeKey, state.activeProject),
+        state.activeProvider
+      )
     );
     const warning = sessionId ? getCodexContextWarning(sessionId) : undefined;
     return warning ? `\n${warning}` : "";
@@ -263,7 +281,9 @@ const statusSessionWarning = async (state: UserState) => {
   }
 };
 
-const userStates = new Map<number, UserState>();
+const scopeStates = new Map<string, UserState>();
+/** Scope resolved by the routing middleware, keyed by the update object. */
+const scopes = new WeakMap<object, Scope>();
 const HISTORY_PAGE_SIZE = 5;
 const PROJECT_PAGE_SIZE = 20;
 const MAX_COMPOSE_MESSAGES = 50;
@@ -332,6 +352,9 @@ const repinMessage = async (
   chatId: number,
   msg: Awaited<ReturnType<Context["editMessageText"]>>
 ) => {
+  if (ctx.msg?.is_topic_message) {
+    return; // topic name already states project and provider; pins are chat-wide
+  }
   await ctx.api.unpinAllChatMessages(chatId).catch(swallow);
   const pinnedId =
     typeof msg === "object" && "message_id" in msg ? msg.message_id : undefined;
@@ -357,6 +380,11 @@ const PLAN_NEW_RE = /^plan_new:(\d+)$/;
 const PLAN_RESUME_RE = /^plan_resume:(\d+)$/;
 const PLAN_MODIFY_RE = /^plan_modify:(\d+)$/;
 const PLAN_CANCEL_RE = /^plan_cancel:(\d+)$/;
+const NT_PAGE_RE = /^nt_projects:(\d+)$/;
+const NT_PROJECT_RE = /^nt_project:(.+)$/;
+const NT_PROVIDER_RE = /^nt_provider:([^:]+):(claude|codex)$/;
+const COMMAND_TAIL_RE = /[\s@]/;
+const WHITESPACE_RE = /\s+/;
 
 /** Persistent reply keyboard with all commands */
 const mainKeyboard = new Keyboard()
@@ -397,19 +425,45 @@ function getUserId(ctx: Context) {
   return ctx.from.id;
 }
 
-/** Get or create user state */
-function getState(id: number): UserState {
-  let state = userStates.get(id);
+/** Scope of the current update (set by the routing middleware). */
+function getScope(ctx: Context): Scope {
+  const scope = scopes.get(ctx.update);
+  if (!scope) {
+    throw new Error("No scope resolved for update");
+  }
+  return scope;
+}
+
+/** Get or create the session state for a scope (private chat or forum topic). */
+function getState(scope: Scope): UserState {
+  let state = scopeStates.get(scope.key);
   if (!state) {
-    const persisted = loadPersistedState();
-    state = {
-      activeProvider: persisted?.activeProvider ?? DEFAULT_PROVIDER,
-      activeProject: persisted?.activeProject ?? "",
-      models: persisted?.models ?? {},
-      efforts: persisted?.efforts ?? {},
-      queue: [],
-    };
-    userStates.set(id, state);
+    if (scope.kind === "topic") {
+      const record = topicOps.get(scope.key);
+      state = {
+        activeProvider: record?.activeProvider ?? DEFAULT_PROVIDER,
+        activeProject: record?.activeProject ?? "",
+        models: record?.models ?? {},
+        efforts: record?.efforts ?? {},
+        queue: [],
+        runKey: scope.key,
+        scopeKey: scope.key,
+        chatId: scope.chatId,
+        threadId: scope.threadId,
+      };
+    } else {
+      const persisted = loadPersistedState();
+      state = {
+        activeProvider: persisted?.activeProvider ?? DEFAULT_PROVIDER,
+        activeProject: persisted?.activeProject ?? "",
+        models: persisted?.models ?? {},
+        efforts: persisted?.efforts ?? {},
+        queue: [],
+        runKey: scope.key,
+        chatId: scope.chatId,
+      };
+    }
+    scopeStates.set(scope.key, state);
   }
   return state;
 }
@@ -451,7 +505,7 @@ function listProjects(projectsDir: string) {
 
 /** Clears stale compose state and logs memory usage */
 export function cleanupStaleState() {
-  for (const [, state] of userStates) {
+  for (const [, state] of scopeStates) {
     if (state.composeMessages && state.queue.length === 0) {
       state.composeMessages = undefined;
       state.composeStatusMessageId = undefined;
@@ -471,9 +525,31 @@ export function createBot(
   token: string,
   allowedUserId: number,
   projectsDir: string,
-  inactivityWarningMs = 1_200_000
+  inactivityWarningMs = 1_200_000,
+  allowedChatIds: readonly number[] = []
 ) {
   const bot = new Bot(token);
+  const allowedChats = new Set(allowedChatIds);
+  const deniedChatsLogged = new Set<number>();
+  /** Commands usable in a group's General area (everything else needs a topic). */
+  const controlCommands = new Set(["start", "help", "nuova", "elenco"]);
+  /** Whether an update in the General area may proceed to the handlers. */
+  const controlAllowed = (ctx: Context) => {
+    if ((ctx.callbackQuery?.data ?? "").startsWith("nt_")) {
+      return true;
+    }
+    const text = ctx.message?.text ?? "";
+    const cmd = text.startsWith("/")
+      ? text.slice(1).split(COMMAND_TAIL_RE, 1)[0]
+      : "";
+    return Boolean(cmd && controlCommands.has(cmd));
+  };
+  const logDenied = (chatId: number) => {
+    if (!deniedChatsLogged.has(chatId)) {
+      deniedChatsLogged.add(chatId);
+      console.log(`Ignoring chat ${chatId}: not in ALLOWED_CHAT_IDS`);
+    }
+  };
 
   // Access control middleware
   const botId = Number.parseInt(token.split(":")[0] ?? "", 10);
@@ -486,6 +562,34 @@ export function createBot(
         `Auth rejected: from=${ctx.from.id} allowed=${allowedUserId}`
       );
       await ctx.reply("Telegram User is Unauthorized.");
+      return;
+    }
+    await next();
+  });
+
+  // Scope routing: private chat (legacy), forum topic (own session), group
+  // General area (control only) or denied. Topic scopes get a context-scoped
+  // API transformer so every reply lands inside the topic.
+  bot.use(async (ctx, next) => {
+    const scope = resolveScope(ctx, allowedChats);
+    if (!scope) {
+      return;
+    }
+    if (scope.kind === "denied") {
+      logDenied(scope.chatId);
+      return;
+    }
+    scopes.set(ctx.update, scope);
+    installThreadTransformer(ctx, scope);
+    if (scope.kind === "control") {
+      if (controlAllowed(ctx)) {
+        return next();
+      }
+      if (ctx.message) {
+        await ctx.reply(
+          "Qui in Generale non si lavora: apri un argomento (una sessione) e scrivi li, oppure crea una sessione con /nuova. /elenco mostra quelle esistenti."
+        );
+      }
       return;
     }
     await next();
@@ -533,7 +637,7 @@ export function createBot(
   // Compose mode interceptor: capture non-command messages when composing
   // Media group photos pass through to the photo handler for batching
   bot.on("message", async (ctx, next) => {
-    const state = getState(ctx.from.id);
+    const state = getState(getScope(ctx));
     if (!state.composeMessages) {
       return next();
     }
@@ -547,7 +651,14 @@ export function createBot(
   });
 
   bot.command("start", async (ctx) => {
-    const state = getState(getUserId(ctx));
+    const scope = getScope(ctx);
+    if (scope.kind !== "private") {
+      await ctx.reply(
+        "Gruppo sessioni pronto.\n/nuova [progetto] [claude|codex] crea un argomento con la sua sessione\n/elenco mostra le sessioni\nDentro un argomento: scrivi per lavorare, /new azzera, /stop ferma, /status stato, /chiudi archivia."
+      );
+      return;
+    }
+    const state = getState(scope);
     const project = state.activeProject || "(none)";
     await ctx.reply(
       `Coding agent bot ready.\nProvider: ${activeProviderName(state)}\nActive project: ${project}\n\nCommands:\n/projects - switch project\n/provider - switch coding agent provider\n/history - resume a past session\n/stop - kill active process\n/status - current state\n/new - reset session`,
@@ -556,7 +667,7 @@ export function createBot(
   });
 
   bot.command("provider", async (ctx) => {
-    const state = getState(getUserId(ctx));
+    const state = getState(getScope(ctx));
     const keyboard = new InlineKeyboard();
     for (const provider of listProviders()) {
       const mark = provider.id === state.activeProvider ? "✓ " : "";
@@ -576,11 +687,10 @@ export function createBot(
       await ctx.answerCallbackQuery({ text: "Unknown provider" });
       return;
     }
-    const userId = ctx.from.id;
-    const state = getState(userId);
-    const wasRunning = hasActiveProcess(userId);
+    const state = getState(getScope(ctx));
+    const wasRunning = hasActiveProcess(state.runKey);
     if (wasRunning) {
-      stopAgent(userId, "switched");
+      stopAgent(state.runKey, "switched");
     }
     // setActiveProvider mutates state.activeProvider in place and persists
     setActiveProvider(state, chosen);
@@ -594,7 +704,7 @@ export function createBot(
   });
 
   bot.command("model", async (ctx) => {
-    const state = getState(getUserId(ctx));
+    const state = getState(getScope(ctx));
     const provider = state.activeProvider;
     const current = state.models[provider] ?? "default";
     const keyboard = new InlineKeyboard();
@@ -609,7 +719,7 @@ export function createBot(
 
   bot.callbackQuery(MODEL_CALLBACK_RE, async (ctx) => {
     const chosen = ctx.match?.[1] as string;
-    const state = getState(ctx.from.id);
+    const state = getState(getScope(ctx));
     const provider = state.activeProvider;
     const choice = getModels(provider).find((m) => m.id === chosen);
     if (!choice) {
@@ -624,7 +734,7 @@ export function createBot(
   });
 
   bot.command("effort", async (ctx) => {
-    const state = getState(getUserId(ctx));
+    const state = getState(getScope(ctx));
     const provider = state.activeProvider;
     const defaultId = getDefaultEffort(provider);
     const current = state.efforts[provider] ?? defaultId;
@@ -645,7 +755,7 @@ export function createBot(
 
   bot.callbackQuery(EFFORT_CALLBACK_RE, async (ctx) => {
     const chosen = ctx.match?.[1] as string;
-    const state = getState(ctx.from.id);
+    const state = getState(getScope(ctx));
     const provider = state.activeProvider;
     const choice = getEffortLevels(provider).find((e) => e.id === chosen);
     if (!choice) {
@@ -740,7 +850,7 @@ export function createBot(
       }
     }
 
-    const state = getState(ctx.from.id);
+    const state = getState(getScope(ctx));
     const chatId = requireChat(ctx);
     setActiveProject(state, fullPath);
     state.queue = [];
@@ -763,10 +873,220 @@ export function createBot(
     await repinMessage(ctx, chatId, msg);
   });
 
+  /** Project picker for /nuova (no "General": a topic is always one project). */
+  function buildTopicProjectsMessage(page: number) {
+    const projects = listProjects(projectsDir);
+    if (projects.length === 0) {
+      return null;
+    }
+    const totalPages = Math.ceil(projects.length / PROJECT_PAGE_SIZE);
+    const safePage = Math.max(0, Math.min(page, totalPages - 1));
+    const pageSlice = projects.slice(
+      safePage * PROJECT_PAGE_SIZE,
+      (safePage + 1) * PROJECT_PAGE_SIZE
+    );
+    const keyboard = new InlineKeyboard();
+    for (const name of pageSlice) {
+      keyboard.text(name, `nt_project:${name}`).row();
+    }
+    if (safePage > 0) {
+      keyboard.text("<< Prev", `nt_projects:${safePage - 1}`);
+    }
+    if (safePage < totalPages - 1) {
+      keyboard.text("Next >>", `nt_projects:${safePage + 1}`);
+    }
+    if (totalPages > 1) {
+      keyboard.row();
+    }
+    const pageIndicator =
+      totalPages > 1 ? ` (${safePage + 1}/${totalPages})` : "";
+    return {
+      text: `Nuova sessione: scegli il progetto${pageIndicator}`,
+      keyboard,
+    };
+  }
+
+  function providerKeyboard(projectName: string) {
+    const keyboard = new InlineKeyboard();
+    for (const provider of listProviders()) {
+      keyboard
+        .text(provider.displayName, `nt_provider:${projectName}:${provider.id}`)
+        .row();
+    }
+    return keyboard;
+  }
+
+  async function createTopicAndAnnounce(
+    ctx: Context,
+    chatId: number,
+    projectName: string,
+    provider: ProviderId,
+    customName?: string
+  ) {
+    const created = await createTopicSession({
+      api: ctx.api,
+      chatId,
+      projectName,
+      projectsDir,
+      provider,
+      customName,
+    });
+    // Pre-warm the in-memory state so the first message in the topic is fast.
+    scopeStates.set(created.key, {
+      activeProvider: created.record.activeProvider,
+      activeProject: created.record.activeProject,
+      models: {},
+      efforts: {},
+      queue: [],
+      runKey: created.key,
+      scopeKey: created.key,
+      chatId,
+      threadId: created.threadId,
+    });
+    return created;
+  }
+
+  bot.command("nuova", async (ctx) => {
+    const scope = getScope(ctx);
+    if (scope.kind === "private") {
+      await ctx.reply(
+        "Le sessioni per argomento vivono nel gruppo Dev: usa /nuova li dentro."
+      );
+      return;
+    }
+    const args = (ctx.match ?? "").trim().split(WHITESPACE_RE).filter(Boolean);
+    const projectName = args[0];
+    const providerArg = args[1]?.toLowerCase();
+    const customName = args.slice(2).join(" ") || undefined;
+    if (!projectName) {
+      const result = buildTopicProjectsMessage(0);
+      if (!result) {
+        await ctx.reply(`Nessun progetto in ${projectsDir}`);
+        return;
+      }
+      await ctx.reply(result.text, { reply_markup: result.keyboard });
+      return;
+    }
+    if (!listProjects(projectsDir).includes(projectName)) {
+      await ctx.reply(
+        `Progetto non trovato: ${projectName}. Usa /nuova senza argomenti per la lista.`
+      );
+      return;
+    }
+    if (providerArg !== "claude" && providerArg !== "codex") {
+      await ctx.reply(`Agente per ${projectLabel(projectName)}:`, {
+        reply_markup: providerKeyboard(projectName),
+      });
+      return;
+    }
+    try {
+      const created = await createTopicAndAnnounce(
+        ctx,
+        scope.chatId,
+        projectName,
+        providerArg,
+        customName
+      );
+      await ctx.reply(`Creato l'argomento "${created.name}". Aprilo e scrivi.`);
+    } catch (e) {
+      await ctx.reply(
+        `Non sono riuscito a creare l'argomento: ${e instanceof Error ? e.message : String(e)}`
+      );
+    }
+  });
+
+  bot.callbackQuery(NT_PAGE_RE, async (ctx) => {
+    const page = Number.parseInt(ctx.match?.[1] ?? "", 10);
+    const result = buildTopicProjectsMessage(page);
+    if (!result) {
+      await ctx.answerCallbackQuery({ text: "Nessun progetto" });
+      return;
+    }
+    await ctx.editMessageText(result.text, { reply_markup: result.keyboard });
+    await ctx.answerCallbackQuery();
+  });
+
+  bot.callbackQuery(NT_PROJECT_RE, async (ctx) => {
+    const projectName = ctx.match?.[1] ?? "";
+    if (!listProjects(projectsDir).includes(projectName)) {
+      await ctx.answerCallbackQuery({ text: "Progetto non trovato" });
+      return;
+    }
+    await ctx.editMessageText(`Agente per ${projectLabel(projectName)}:`, {
+      reply_markup: providerKeyboard(projectName),
+    });
+    await ctx.answerCallbackQuery();
+  });
+
+  bot.callbackQuery(NT_PROVIDER_RE, async (ctx) => {
+    const projectName = ctx.match?.[1] ?? "";
+    const provider = ctx.match?.[2] as ProviderId;
+    const scope = getScope(ctx);
+    try {
+      const created = await createTopicAndAnnounce(
+        ctx,
+        scope.chatId,
+        projectName,
+        provider
+      );
+      await ctx.answerCallbackQuery({ text: "Sessione creata" });
+      await ctx.editMessageText(
+        `Creato l'argomento "${created.name}". Aprilo e scrivi.`
+      );
+    } catch (e) {
+      await ctx.answerCallbackQuery({ text: "Errore nella creazione" });
+      await ctx.editMessageText(
+        `Non sono riuscito a creare l'argomento: ${e instanceof Error ? e.message : String(e)}`
+      );
+    }
+  });
+
+  bot.command("elenco", async (ctx) => {
+    const scope = getScope(ctx);
+    if (scope.kind === "private") {
+      await ctx.reply("L'elenco delle sessioni si usa nel gruppo Dev.");
+      return;
+    }
+    const topics = Object.entries(topicOps.list()).filter(
+      ([, t]) => t.chatId === scope.chatId
+    );
+    if (topics.length === 0) {
+      await ctx.reply("Nessuna sessione. Creane una con /nuova.");
+      return;
+    }
+    const lines = topics.map(([key, t]) => {
+      const running = hasActiveProcess(key) ? " · in esecuzione" : "";
+      return `• ${escapeHtml(t.name)} — ${escapeHtml(basename(t.activeProject))} / ${escapeHtml(getProvider(t.activeProvider).displayName)}${running}`;
+    });
+    await ctx.reply(lines.join("\n"), { parse_mode: "HTML" });
+  });
+
+  bot.command("chiudi", async (ctx) => {
+    const scope = getScope(ctx);
+    if (scope.kind !== "topic" || scope.threadId === undefined) {
+      await ctx.reply("/chiudi si usa dentro un argomento del gruppo.");
+      return;
+    }
+    const state = getState(scope);
+    stopAgent(state.runKey, "stopped");
+    state.queue = [];
+    state.pendingPlan = undefined;
+    state.composeMessages = undefined;
+    await runtime.runPromise(
+      clearSession(
+        sessionProjectKey(state.scopeKey, state.activeProject),
+        state.activeProvider
+      )
+    );
+    topicOps.remove(scope.key);
+    scopeStates.delete(scope.key);
+    await ctx.reply("Sessione archiviata. Chiudo l'argomento.");
+    await ctx.api.closeForumTopic(scope.chatId, scope.threadId).catch(swallow);
+  });
+
   bot.command("stop", async (ctx) => {
-    const userId = getUserId(ctx);
-    const state = getState(userId);
-    const stopped = stopAgent(userId, "stopped");
+    const state = getState(getScope(ctx));
+    const stopped = stopAgent(state.runKey, "stopped");
     const hadQueue = state.queue.length > 0;
     state.queue = [];
     state.pendingPlan = undefined;
@@ -780,12 +1100,11 @@ export function createBot(
   });
 
   bot.command("status", async (ctx) => {
-    const userId = getUserId(ctx);
-    const state = getState(userId);
+    const state = getState(getScope(ctx));
     const project = describeProject(state.activeProject, projectsDir);
-    const activeRun = getActiveRunSnapshot(userId);
+    const activeRun = getActiveRunSnapshot(state.runKey);
     let running = "No";
-    if (hasActiveProcess(userId)) {
+    if (hasActiveProcess(state.runKey)) {
       running = activeRun ? formatActiveRunTiming(activeRun) : "Yes";
     }
     const sessionCount = await runtime.runPromise(
@@ -843,7 +1162,7 @@ export function createBot(
   });
 
   bot.command("branch", async (ctx) => {
-    const state = getState(getUserId(ctx));
+    const state = getState(getScope(ctx));
     if (!state.activeProject || state.activeProject === projectsDir) {
       await ctx.reply("No project selected or in general mode.", {
         reply_markup: mainKeyboard,
@@ -886,7 +1205,7 @@ export function createBot(
   });
 
   bot.command("pr", async (ctx) => {
-    const state = getState(getUserId(ctx));
+    const state = getState(getScope(ctx));
     if (!state.activeProject || state.activeProject === projectsDir) {
       await ctx.reply("No project selected or in general mode.", {
         reply_markup: mainKeyboard,
@@ -917,17 +1236,19 @@ export function createBot(
   });
 
   bot.command("new", async (ctx) => {
-    const userId = getUserId(ctx);
-    const state = getState(userId);
+    const state = getState(getScope(ctx));
     if (!state.activeProject) {
       setActiveProject(state, projectsDir);
     }
     // Interrupt any in-flight run first: otherwise its session_init/result tap
     // would re-persist the session id right after we clear it, so /new would
     // fail to start a fresh conversation.
-    stopAgent(userId, "stopped");
+    stopAgent(state.runKey, "stopped");
     await runtime.runPromise(
-      clearSession(state.activeProject, state.activeProvider)
+      clearSession(
+        sessionProjectKey(state.scopeKey, state.activeProject),
+        state.activeProvider
+      )
     );
     state.queue = [];
     state.pendingPlan = undefined;
@@ -941,7 +1262,7 @@ export function createBot(
   });
 
   bot.command("compose", async (ctx) => {
-    const state = getState(getUserId(ctx));
+    const state = getState(getScope(ctx));
     if (state.composeMessages) {
       await ctx.reply(
         `Already composing (${state.composeMessages.length} messages). /send when done.`
@@ -996,25 +1317,23 @@ export function createBot(
   }
 
   bot.command("send", async (ctx) => {
-    const state = getState(getUserId(ctx));
+    const state = getState(getScope(ctx));
     await executeSend(ctx, state);
   });
 
   bot.command("cancel", async (ctx) => {
-    const state = getState(getUserId(ctx));
+    const state = getState(getScope(ctx));
     await executeCancel(ctx, state);
   });
 
   bot.callbackQuery(COMPOSE_SEND_RE, async (ctx) => {
-    const userId = Number.parseInt(ctx.match?.[1] ?? "", 10);
-    const state = getState(userId);
+    const state = getState(getScope(ctx));
     await ctx.answerCallbackQuery();
     await executeSend(ctx, state);
   });
 
   bot.callbackQuery(COMPOSE_CANCEL_RE, async (ctx) => {
-    const userId = Number.parseInt(ctx.match?.[1] ?? "", 10);
-    const state = getState(userId);
+    const state = getState(getScope(ctx));
     await ctx.answerCallbackQuery();
     await executeCancel(ctx, state);
   });
@@ -1090,7 +1409,7 @@ export function createBot(
   }
 
   bot.command("history", async (ctx) => {
-    const state = getState(getUserId(ctx));
+    const state = getState(getScope(ctx));
     const result = buildHistoryMessage(0, state.activeProvider);
 
     if (!result) {
@@ -1108,7 +1427,7 @@ export function createBot(
 
   bot.callbackQuery(HISTORY_PAGE_RE, async (ctx) => {
     const page = Number.parseInt(ctx.match?.[1] ?? "", 10);
-    const state = getState(ctx.from.id);
+    const state = getState(getScope(ctx));
     const result = buildHistoryMessage(page, state.activeProvider);
 
     if (!result) {
@@ -1125,7 +1444,7 @@ export function createBot(
 
   bot.callbackQuery(SESSION_CALLBACK_RE, async (ctx) => {
     const sessionId = ctx.match?.[1] ?? "";
-    const state = getState(ctx.from.id);
+    const state = getState(getScope(ctx));
 
     const cachedProject = getSessionProject(state.activeProvider, sessionId);
     if (cachedProject) {
@@ -1139,7 +1458,7 @@ export function createBot(
 
     await runtime.runPromise(
       setSession({
-        project: state.activeProject,
+        project: sessionProjectKey(state.scopeKey, state.activeProject),
         provider: state.activeProvider,
         sessionId,
       })
@@ -1155,16 +1474,15 @@ export function createBot(
   });
 
   bot.callbackQuery(FORCE_SEND_RE, async (ctx) => {
-    const userId = ctx.from.id;
-    const stopped = stopAgent(userId, "new_prompt");
+    const state = getState(getScope(ctx));
+    const stopped = stopAgent(state.runKey, "new_prompt");
     await ctx.answerCallbackQuery({
       text: stopped ? "Stopping current task..." : "No active process",
     });
   });
 
   bot.callbackQuery(CLEAR_QUEUE_RE, async (ctx) => {
-    const userId = ctx.from.id;
-    const state = getState(userId);
+    const state = getState(getScope(ctx));
     const count = state.queue.length;
     state.queue = [];
     await cleanupQueueStatus(state, ctx);
@@ -1226,7 +1544,7 @@ export function createBot(
 
   bot.callbackQuery(PLAN_NEW_RE, async (ctx) => {
     const userId = ctx.from.id;
-    const state = getState(userId);
+    const state = getState(getScope(ctx));
     const plan = activePendingPlan(state);
     if (!plan) {
       await ctx.answerCallbackQuery({ text: "No pending plan" });
@@ -1244,7 +1562,10 @@ export function createBot(
 
     setActiveProject(state, plan.projectPath);
     await runtime.runPromise(
-      clearSession(plan.projectPath, state.activeProvider)
+      clearSession(
+        sessionProjectKey(state.scopeKey, plan.projectPath),
+        state.activeProvider
+      )
     );
     state.pendingPlan = undefined;
     await ctx.answerCallbackQuery({ text: "Executing plan (new session)..." });
@@ -1258,7 +1579,7 @@ export function createBot(
 
   bot.callbackQuery(PLAN_RESUME_RE, async (ctx) => {
     const userId = ctx.from.id;
-    const state = getState(userId);
+    const state = getState(getScope(ctx));
     const plan = activePendingPlan(state);
     if (!plan) {
       await ctx.answerCallbackQuery({ text: "No pending plan" });
@@ -1269,7 +1590,7 @@ export function createBot(
     if (plan.sessionId) {
       await runtime.runPromise(
         setSession({
-          project: plan.projectPath,
+          project: sessionProjectKey(state.scopeKey, plan.projectPath),
           provider: state.activeProvider,
           sessionId: plan.sessionId,
         })
@@ -1290,7 +1611,7 @@ export function createBot(
 
   bot.callbackQuery(PLAN_MODIFY_RE, async (ctx) => {
     const userId = ctx.from.id;
-    const state = getState(userId);
+    const state = getState(getScope(ctx));
     if (!activePendingPlan(state)) {
       await ctx.answerCallbackQuery({ text: "No pending plan" });
       return;
@@ -1308,7 +1629,7 @@ export function createBot(
 
   bot.callbackQuery(PLAN_CANCEL_RE, async (ctx) => {
     const userId = ctx.from.id;
-    const state = getState(userId);
+    const state = getState(getScope(ctx));
     if (!activePendingPlan(state)) {
       await ctx.answerCallbackQuery({ text: "No pending plan" });
       return;
@@ -1328,7 +1649,7 @@ export function createBot(
   /** Send a prompt to the active provider and stream the response */
   async function handlePrompt(ctx: Context, prompt: string) {
     const userId = getUserId(ctx);
-    const state = getState(userId);
+    const state = getState(getScope(ctx));
 
     if (!state.activeProject) {
       setActiveProject(state, projectsDir);
@@ -1344,7 +1665,7 @@ export function createBot(
       if (plan.sessionId) {
         await runtime.runPromise(
           setSession({
-            project: plan.projectPath,
+            project: sessionProjectKey(state.scopeKey, plan.projectPath),
             provider: state.activeProvider,
             sessionId: plan.sessionId,
           })
@@ -1356,7 +1677,7 @@ export function createBot(
       return;
     }
 
-    if (hasActiveProcess(userId)) {
+    if (hasActiveProcess(state.runKey)) {
       state.queue.push({ prompt, ctx });
       await sendOrUpdateQueueStatus(ctx, state);
       return;
@@ -1373,7 +1694,10 @@ export function createBot(
     userId: number
   ) {
     const sessionId = await runtime.runPromise(
-      getSession(state.activeProject, state.activeProvider)
+      getSession(
+        sessionProjectKey(state.scopeKey, state.activeProject),
+        state.activeProvider
+      )
     );
     const projectName =
       state.activeProject === projectsDir
@@ -1434,6 +1758,8 @@ export function createBot(
           );
           const events = runAgent(provider, {
             userId,
+            runKey: state.runKey,
+            sessionKey: sessionProjectKey(state.scopeKey, project),
             prompt,
             projectDir: project,
             chatId: requireChat(ctx),
@@ -1450,7 +1776,8 @@ export function createBot(
             {
               branchName,
               inactivityWarningMs,
-              onProgress: (at) => noteAgentProgress(userId, meta.runId, at),
+              onProgress: (at) =>
+                noteAgentProgress(state.runKey, meta.runId, at),
             }
           );
           if (result.sessionId) {
@@ -1461,7 +1788,7 @@ export function createBot(
           applyResultEconomics(result, rec);
 
           if (result.planPath && getCapabilities(provider).planMode) {
-            stopAgent(userId, "stopped");
+            stopAgent(state.runKey, "stopped");
             await presentPlan(ctx, userId, state, result);
             presentedPlan = true;
           }
@@ -1483,7 +1810,11 @@ export function createBot(
         // clear the newly created failed Codex session for this project.
         if (failed.sessionId) {
           const cleared = await runtime.runPromise(
-            clearSessionIfMatches(project, "codex", failed.sessionId)
+            clearSessionIfMatches(
+              sessionProjectKey(state.scopeKey, project),
+              "codex",
+              failed.sessionId
+            )
           );
           if (!cleared) {
             await ctx.reply(
@@ -1713,7 +2044,7 @@ export function createBot(
   });
 
   bot.on("message:voice", async (ctx) => {
-    const state = getState(ctx.from.id);
+    const state = getState(getScope(ctx));
 
     if (!state.activeProject) {
       setActiveProject(state, projectsDir);
@@ -1764,7 +2095,7 @@ export function createBot(
     filename: string,
     fileId?: string
   ) {
-    const state = getState(getUserId(ctx));
+    const state = getState(getScope(ctx));
     if (!state.activeProject) {
       setActiveProject(state, projectsDir);
       await ctx.reply("No project selected. Using General (all projects).", {
@@ -1822,7 +2153,7 @@ export function createBot(
     }
 
     const { ctx, photos, caption } = group;
-    const state = getState(getUserId(ctx));
+    const state = getState(getScope(ctx));
 
     try {
       const photoParts: string[] = [];

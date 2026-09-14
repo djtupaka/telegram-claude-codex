@@ -25,6 +25,20 @@ const load = Effect.gen(function* () {
 
   const groqApiKey = yield* Config.redacted("GROQ_API_KEY");
 
+  // Optional: group/supergroup chat ids (comma-separated) where the bot may be
+  // used with forum topics. Any other non-private chat is ignored.
+  const allowedChatIdsRaw = yield* Config.string("ALLOWED_CHAT_IDS").pipe(
+    Config.withDefault("")
+  );
+  const allowedChatIds = allowedChatIdsRaw
+    .split(",")
+    .map((v) => v.trim())
+    .filter((v) => v.length > 0)
+    .map((v) => Number.parseInt(v, 10));
+  if (allowedChatIds.some((v) => Number.isNaN(v))) {
+    yield* Effect.die("ALLOWED_CHAT_IDS must be comma-separated integers");
+  }
+
   const projectsDir = yield* Config.string("PROJECTS_DIR").pipe(
     Config.withDefault("/home/agent/projects")
   );
@@ -97,6 +111,7 @@ const load = Effect.gen(function* () {
   return {
     botToken,
     allowedUserId,
+    allowedChatIds,
     groqApiKey,
     projectsDir,
     anthropicApiKey,

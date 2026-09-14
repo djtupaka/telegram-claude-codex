@@ -37,24 +37,24 @@ const QUEUE_CAPACITY = 256;
 const make = Effect.gen(function* () {
   const cfg = yield* AppConfig;
   const sem = yield* Semaphore.make(cfg.maxConcurrentRuns);
-  const fibers = yield* FiberMap.make<number, void, AgentError>();
-  const reasons = new Map<number, InterruptReason>();
-  const activeRuns = new Map<number, ActiveRunSnapshot>();
+  const fibers = yield* FiberMap.make<string, void, AgentError>();
+  const reasons = new Map<string, InterruptReason>();
+  const activeRuns = new Map<string, ActiveRunSnapshot>();
 
   /** Ignore stale progress emitted by an older run after its replacement starts. */
-  const noteProgress = (userId: number, runId: string, at = Date.now()) =>
+  const noteProgress = (key: string, runId: string, at = Date.now()) =>
     Effect.sync(() => {
-      const active = activeRuns.get(userId);
+      const active = activeRuns.get(key);
       if (active?.runId === runId) {
-        activeRuns.set(userId, { ...active, lastProgressAt: at });
+        activeRuns.set(key, { ...active, lastProgressAt: at });
       }
     });
 
   /** Never let an older, interrupted fiber erase its replacement's metadata. */
-  const clearActiveRun = (userId: number, runId: string) =>
+  const clearActiveRun = (key: string, runId: string) =>
     Effect.sync(() => {
-      if (activeRuns.get(userId)?.runId === runId) {
-        activeRuns.delete(userId);
+      if (activeRuns.get(key)?.runId === runId) {
+        activeRuns.delete(key);
       }
     });
 
@@ -67,12 +67,12 @@ const make = Effect.gen(function* () {
   const emitTerminal = (
     queue: EventQueue,
     exit: Exit.Exit<void, AgentError>,
-    userId: number
+    key: string
   ) =>
     Effect.gen(function* () {
       if (Exit.isFailure(exit)) {
         const err: AgentError = Cause.hasInterruptsOnly(exit.cause)
-          ? new AgentInterrupted({ reason: reasons.get(userId) ?? "stopped" })
+          ? new AgentInterrupted({ reason: reasons.get(key) ?? "stopped" })
           : Option.getOrElse(
               Cause.findErrorOption(exit.cause),
               () => new ProviderCrashed({ message: Cause.pretty(exit.cause) })
@@ -120,17 +120,21 @@ const make = Effect.gen(function* () {
         Option.isSome(ran) ? Effect.void : new AtCapacity({})
       ),
       Effect.onExit((exit) =>
-        emitTerminal(queue, exit, opts.userId).pipe(
-          Effect.ensuring(clearActiveRun(opts.userId, opts.runId))
+        emitTerminal(queue, exit, opts.runKey).pipe(
+          Effect.ensuring(clearActiveRun(opts.runKey, opts.runId))
         )
       ),
-      Effect.annotateLogs({ userId: opts.userId, provider: spec.id })
+      Effect.annotateLogs({
+        runKey: opts.runKey,
+        userId: opts.userId,
+        provider: spec.id,
+      })
     );
   };
 
   /**
-   * Starts a run for a user: creates the bridge queue, records the pre-empt
-   * reason, and forks the producer into the FiberMap keyed by userId — which
+   * Starts a run for a key (private chat or topic): creates the bridge queue, records the pre-empt
+   * reason, and forks the producer into the FiberMap keyed by key — which
    * interrupts any prior run for that user (fire-and-forget). Returns the queue
    * for the Promise-side AsyncGenerator to drain.
    */
@@ -139,10 +143,10 @@ const make = Effect.gen(function* () {
       const queue = yield* Queue.bounded<AgentEvent, Cause.Done>(
         QUEUE_CAPACITY
       );
-      yield* Effect.sync(() => reasons.set(opts.userId, "new_prompt"));
+      yield* Effect.sync(() => reasons.set(opts.runKey, "new_prompt"));
       const startedAt = Date.now();
       yield* Effect.sync(() =>
-        activeRuns.set(opts.userId, {
+        activeRuns.set(opts.runKey, {
           provider: spec.id,
           runId: opts.runId,
           startedAt,
@@ -151,32 +155,32 @@ const make = Effect.gen(function* () {
       );
       yield* FiberMap.run(
         fibers,
-        opts.userId
+        opts.runKey
       )(buildProducer(spec, opts, queue));
       return queue;
     });
 
   /**
-   * Records the interrupt reason and tears down the user's fiber. The removal is
+   * Records the interrupt reason and tears down the key's fiber. The removal is
    * detached so callers (grammy handlers) never block on the kill grace.
    * Returns whether a run was active.
    */
-  const stop = (userId: number, reason: InterruptReason) =>
+  const stop = (key: string, reason: InterruptReason) =>
     Effect.gen(function* () {
-      const active = yield* FiberMap.has(fibers, userId);
+      const active = yield* FiberMap.has(fibers, key);
       if (!active) {
         return false;
       }
-      yield* Effect.sync(() => reasons.set(userId, reason));
-      yield* Effect.forkDetach(FiberMap.remove(fibers, userId));
+      yield* Effect.sync(() => reasons.set(key, reason));
+      yield* Effect.forkDetach(FiberMap.remove(fibers, key));
       return true;
     });
 
-  const has = (userId: number) => FiberMap.has(fibers, userId);
+  const has = (key: string) => FiberMap.has(fibers, key);
 
-  const snapshot = (userId: number) =>
+  const snapshot = (key: string) =>
     Effect.sync(() => {
-      const value = activeRuns.get(userId);
+      const value = activeRuns.get(key);
       return value ? { ...value } : undefined;
     });
 
@@ -190,7 +194,7 @@ const make = Effect.gen(function* () {
 });
 
 /**
- * RunRegistry: owns global concurrency + per-user single-flight run lifecycles.
+ * RunRegistry: owns global concurrency + per-key (chat or topic) single-flight run lifecycles.
  * Built once in the runtime scope (Semaphore/FiberMap live until dispose, which
  * clears — interrupts — all runs). beta-78 has no Layer.scoped; Layer.effect
  * discharges the Scope FiberMap.make requires.
@@ -205,12 +209,12 @@ export class RunRegistry extends Context.Service<
 /** Effect accessors — bridged to Promise-land in agent/index.ts. */
 export const startRun = (spec: ProviderSpec, opts: RunOptions) =>
   Effect.flatMap(RunRegistry, (r) => r.start(spec, opts));
-export const stopRun = (userId: number, reason: InterruptReason) =>
-  Effect.flatMap(RunRegistry, (r) => r.stop(userId, reason));
-export const hasRun = (userId: number) =>
-  Effect.flatMap(RunRegistry, (r) => r.has(userId));
-export const getRunSnapshot = (userId: number) =>
-  Effect.flatMap(RunRegistry, (r) => r.snapshot(userId));
-export const noteRunProgress = (userId: number, runId: string, at?: number) =>
-  Effect.flatMap(RunRegistry, (r) => r.noteProgress(userId, runId, at));
+export const stopRun = (key: string, reason: InterruptReason) =>
+  Effect.flatMap(RunRegistry, (r) => r.stop(key, reason));
+export const hasRun = (key: string) =>
+  Effect.flatMap(RunRegistry, (r) => r.has(key));
+export const getRunSnapshot = (key: string) =>
+  Effect.flatMap(RunRegistry, (r) => r.snapshot(key));
+export const noteRunProgress = (key: string, runId: string, at?: number) =>
+  Effect.flatMap(RunRegistry, (r) => r.noteProgress(key, runId, at));
 export const stopAllRuns = Effect.flatMap(RunRegistry, (r) => r.stopAll);
