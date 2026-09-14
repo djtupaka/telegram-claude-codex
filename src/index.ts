@@ -94,6 +94,10 @@ bot.start({
     checkCodexAvailable();
     cleanupTimer = setInterval(cleanupStaleState, CLEANUP_INTERVAL);
     const commands = [
+      {
+        command: "menu",
+        description: "Menu interattivo: progetti, attività e impostazioni",
+      },
       { command: "projects", description: "Switch active project" },
       { command: "provider", description: "Switch coding agent provider" },
       { command: "model", description: "Switch model for active provider" },

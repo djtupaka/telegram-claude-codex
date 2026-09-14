@@ -2,6 +2,7 @@ import { basename } from "node:path";
 import type { Bot, Context } from "grammy";
 import type { ProviderId } from "./agent/types";
 import { ApprovalBroker } from "./approvals";
+import { menuShortcut } from "./dev-menu";
 import {
   calendarDayRange,
   formatStats,
@@ -40,7 +41,9 @@ export function installBotControls(options: {
     text: string
   ) => {
     try {
-      await bot.api.editMessageText(chatId, messageId, text);
+      await bot.api.editMessageText(chatId, messageId, text, {
+        reply_markup: menuShortcut(),
+      });
       return true;
     } catch (error) {
       const description = (error as { description?: string }).description ?? "";
@@ -77,6 +80,7 @@ export function installBotControls(options: {
         if (!messageId) {
           const message = await bot.api.sendMessage(target.chatId, text, {
             message_thread_id: target.threadId,
+            reply_markup: menuShortcut(),
           });
           messageId = message.message_id;
           store.patchSettings(target.scopeKey, { pinnedMessageId: messageId });

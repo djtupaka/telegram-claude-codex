@@ -66,6 +66,7 @@ test("summary edits its own message and never unpins other messages", async () =
         options: { message_thread_id: number }
       ) => {
         expect(options.message_thread_id).toBe(2);
+        expect(JSON.stringify(options)).toContain("menu:open");
         calls.push("send");
         return { message_id: 44 };
       },

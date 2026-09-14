@@ -54,3 +54,18 @@ Backup dello stato ripristinato e confrontato byte per byte:
 `/home/djtupaka/projects/dev-bot/.data/backups/project-picker-20260914T100425Z.tar.gz`.
 SHA-256 `18d774f77121903e9ddd1ca5bf53d2ac200ca7bd0c3fd6cd6b59bbf2dfd82bdf`.
 Attivazione tramite lo stesso riavvio differito e ricevuta legata al nuovo commit, senza interrompere questa sessione.
+
+## Aggiornamento: menu interattivo
+
+Base `2cc740498daaa4df15a7891a70131818feb3e9a9`. Richiesta di Nicolas: menu, pulsanti e navigazione comoda fra progetti e impostazioni nel gruppo Dev. Realizzati menu inline distinti per Generale e argomento, collegamenti diretti agli argomenti del gruppo, attività in corso, impostazioni e azioni rapide che riusano i comandi esistenti. Il riepilogo fissato apre il menu in un nuovo messaggio; Generale offre il pulsante per fissare il menu. In privato resta la tastiera precedente con un tasto Menu aggiuntivo.
+
+RED/GREEN sui menu mancanti, sull'integrazione `/menu` e sul collegamento dal riepilogo; test sui confini di gruppo, paginazione, operazioni vietate in Generale, isolamento delle impostazioni fra argomenti e conservazione delle tastiere di approvazione. Il dispatch dei pulsanti attraversa autenticazione e routing esistenti tramite un aggiornamento sintetico limitato ai comandi ammessi. Nessun evento esterno o collegamento ai servizi configurato.
+
+Review indipendente senza difetti bloccanti. Limite UX dichiarato: Nuovo progetto mostra il comando per fornire il nome della cartella; non è un wizard di inserimento del nome.
+
+Verifica finale: `bun test` **274 pass, 0 fail**, 790 assertion, 41 file; `bun run typecheck`, `bun run lint` e `git diff --check` exit 0. Lint con i due avvisi di complessità già presenti, nessun nuovo avviso. Prove Telegram e del routing in ambiente isolato senza rete; non è stata eseguita una prova manuale del client Telegram.
+
+Backup con ripristino e confronto byte per byte di state/topics/sessions/operations:
+`/home/djtupaka/projects/dev-bot/.data/backups/dev-menu-20260914T101701Z.tar.gz`.
+SHA-256 `0f11315bcd81b0e86b7f402b11cfa9f8392835fda726027c8af973ba6924d64d`.
+La precedente attivazione `2cc7404` ha ricevuta `success`. La nuova attivazione usa il riavvio differito e produce la propria ricevuta per commit in `.data/releases`.

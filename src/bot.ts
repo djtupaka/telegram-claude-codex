@@ -35,6 +35,7 @@ import { storeAttachment } from "./attachments";
 import type { AutomationTarget } from "./automations";
 import { installAutomations } from "./bot-automations";
 import { type ControlTarget, installBotControls } from "./bot-controls";
+import { installDevMenu, menuReplyTransformer, menuShortcut } from "./dev-menu";
 import {
   getCurrentBranch,
   getGitHubUrl,
@@ -387,6 +388,8 @@ const WHITESPACE_RE = /\s+/;
 
 /** Persistent reply keyboard with all commands */
 const mainKeyboard = new Keyboard()
+  .text("☰ Menu")
+  .row()
   .text("Projects")
   .text("History")
   .row()
@@ -532,11 +535,13 @@ export function createBot(
   allowedChatIds: readonly number[] = []
 ) {
   const bot = new Bot(token);
+  bot.api.config.use(menuReplyTransformer);
   const allowedChats = new Set(allowedChatIds);
   const deniedChatsLogged = new Set<number>();
   /** Commands usable in a group's General area (everything else needs a topic). */
   const controlCommands = new Set([
     "start",
+    "menu",
     "help",
     "nuova",
     "nuovo_progetto",
@@ -544,10 +549,14 @@ export function createBot(
   ]);
   /** Whether an update in the General area may proceed to the handlers. */
   const controlAllowed = (ctx: Context) => {
-    if ((ctx.callbackQuery?.data ?? "").startsWith("nt_")) {
+    const callbackData = ctx.callbackQuery?.data ?? "";
+    if (callbackData.startsWith("nt_") || callbackData.startsWith("menu:")) {
       return true;
     }
     const text = ctx.message?.text ?? "";
+    if (text === "☰ Menu") {
+      return true;
+    }
     const cmd = text.startsWith("/")
       ? text.slice(1).split(COMMAND_TAIL_RE, 1)[0]
       : "";
@@ -596,7 +605,8 @@ export function createBot(
       }
       if (ctx.message) {
         await ctx.reply(
-          "Qui in Generale non si lavora: apri un argomento (una sessione) e scrivi li, oppure crea una sessione con /nuova. /elenco mostra quelle esistenti."
+          "Apri il menu per scegliere un progetto o creare un argomento. Dentro l'argomento puoi scrivere per lavorare.",
+          { reply_markup: menuShortcut() }
         );
       }
       return;
@@ -657,6 +667,68 @@ export function createBot(
     }
     return targetForState(scope, getState(scope));
   };
+  bot.use((ctx, next) => {
+    if (ctx.message?.text === "☰ Menu") {
+      ctx.message.text = "/menu";
+      ctx.message.entities = [{ type: "bot_command", offset: 0, length: 5 }];
+    }
+    return next();
+  });
+  const menu = installDevMenu({
+    bot,
+    context: (ctx) => {
+      const scope = getScope(ctx);
+      if (scope.kind === "control" || scope.kind === "denied") {
+        return { kind: scope.kind };
+      }
+      const state = getState(scope);
+      const target = targetForState(scope, state);
+      return {
+        kind: scope.kind,
+        project: basename(target.project),
+        provider: activeProviderName(state),
+        model: target.model,
+        effort: target.effort,
+        running: busy(state.runKey),
+        queued: state.queue.length,
+        approvalPolicy: controls.store.getSettings(scope.key).approvalPolicy,
+      };
+    },
+    topics: () =>
+      Object.entries(topicOps.list()).map(([key, topic]) => ({
+        name: topic.name,
+        chatId: topic.chatId,
+        threadId: topic.threadId,
+        running: busy(key),
+      })),
+    runCommand: async (ctx, command) => {
+      const message = ctx.callbackQuery?.message;
+      if (!(message?.date && ctx.from) || message.chat.type === "channel") {
+        await ctx.reply("Menu non più disponibile. Riaprilo con /menu.");
+        return;
+      }
+      const text = `/${command}`;
+      await bot.handleUpdate({
+        update_id: ctx.update.update_id,
+        message: {
+          message_id: message.message_id,
+          date: message.date,
+          chat: message.chat,
+          from: ctx.from,
+          text,
+          is_topic_message: getScope(ctx).kind === "topic",
+          message_thread_id: getScope(ctx).threadId,
+          entities: [
+            {
+              type: "bot_command",
+              offset: 0,
+              length: text.split(" ")[0]?.length ?? text.length,
+            },
+          ],
+        },
+      });
+    },
+  });
   const controls = installBotControls({
     bot,
     getTarget,
@@ -839,9 +911,7 @@ export function createBot(
   bot.command("start", async (ctx) => {
     const scope = getScope(ctx);
     if (scope.kind !== "private") {
-      await ctx.reply(
-        "Gruppo sessioni pronto.\n/nuova [progetto] [claude|codex] crea un argomento con la sua sessione\n/elenco mostra le sessioni\nDentro un argomento: scrivi per lavorare, /new azzera, /stop ferma, /status stato, /chiudi archivia."
-      );
+      await menu.show(ctx);
       return;
     }
     const state = getState(scope);
@@ -1369,6 +1439,7 @@ export function createBot(
     await ctx.reply(
       [
         "<b>Commands:</b>",
+        "/menu — pulsanti per progetti, attività e impostazioni",
         "/nuova — apri un argomento dalla lista dei progetti",
         "/nuovo_progetto nome — crea cartella e prepara il nuovo argomento",
         "/projects — switch active project",

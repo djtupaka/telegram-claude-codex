@@ -8,6 +8,20 @@ Ripresa degli inoltri del 14 settembre 2026: lavori simultanei su progetti disti
 
 Ogni argomento conserva progetto, provider, modello, impegno e conversazione propri. Nodarr e PremelOne possono lavorare contemporaneamente in argomenti separati. Il limite globale resta `MAX_CONCURRENT_RUNS=4` predefinito. Una quinta esecuzione viene rifiutata dal limite: non esiste una coda globale. Nello stesso argomento i messaggi si accodano, anche durante un programma automatico, e riprendono alla sua conclusione. Le sessioni separate non isolano i file: due lavori sullo stesso repository devono coordinarsi.
 
+## Menu interattivo
+
+Usare `/menu` nel gruppo o il tasto **Menu** in privato. `/start` nel gruppo apre lo stesso pannello.
+
+- In **Generale**: progetti e argomenti già aperti, creazione di un argomento da un progetto esistente, nuovo progetto, attività in corso, aggiornamento e pulsante per fissare il menu.
+- In un **argomento**: progetto, agente, modello, impegno e stato corrente; impostazioni, statistiche, cronologia, nuova conversazione, raccolta/invio dei messaggi e arresto del lavoro. Ogni azione riguarda la conversazione in cui viene premuta.
+- **Impostazioni**: agente, modello, impegno e permessi. I tasti richiamano gli stessi comandi esistenti e conservano i loro controlli; in Generale le impostazioni di sessione non sono eseguibili.
+- La lista degli argomenti è paginata e filtrata per gruppo. I pulsanti aprono direttamente l'argomento; Attività mostra solo quelli con un lavoro attivo.
+- I riepiloghi fissati degli argomenti includono **Menu**, che apre un nuovo messaggio e conserva il riepilogo. Il menu di Generale si fissa con **Fissa menu**, senza rimuovere gli altri messaggi fissati.
+
+I pulsanti di arresto e nuova conversazione eseguono i relativi comandi, incluso lo svuotamento della coda previsto dal bot. Il cambio agente interrompe l'esecuzione attiva; modello e impegno si applicano al messaggio successivo. Nuovo progetto mostra il comando con cui fornire il nome della cartella. Restano disponibili tutti i comandi testuali.
+
+I link degli argomenti seguono il [formato ufficiale Telegram](https://core.telegram.org/api/links#forum-topic-links). Il menu usa pulsanti inline legati al messaggio; la tastiera privata viene sostituita da un collegamento Menu nelle risposte del gruppo. Nessun collegamento ai servizi esterni è stato aggiunto.
+
 ## Progetti nuovi ed esistenti
 
 `/nuova` mostra le cartelle già presenti nella directory `PROJECTS_DIR` di Ubuntu. Scegliere un progetto e poi Claude o Codex crea un argomento collegato a quella cartella, senza ricreare il progetto.

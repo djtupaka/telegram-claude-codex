@@ -163,6 +163,51 @@ function callback(thread = 7, user = 42, chat = -100): Update {
   };
 }
 try {
+  await bot.handleUpdate(message("/menu", 0));
+  assert(
+    calls.some((c) =>
+      (JSON.stringify(c.payload.reply_markup) ?? "").includes("menu:topics:0")
+    ),
+    "General must show interactive navigation"
+  );
+  await bot.handleUpdate(message("/menu", 7));
+  assert(
+    calls.some(
+      (c) =>
+        c.payload.message_thread_id === 7 &&
+        (JSON.stringify(c.payload.reply_markup) ?? "").includes("menu:settings")
+    ),
+    "Topic must show its settings menu"
+  );
+  const providerMenu = callback(7);
+  if (providerMenu.callback_query) {
+    providerMenu.callback_query.data = "menu:run:provider";
+  }
+  await bot.handleUpdate(providerMenu);
+  assert(
+    calls.some(
+      (c) =>
+        c.payload.message_thread_id === 7 &&
+        (JSON.stringify(c.payload.reply_markup) ?? "").includes(
+          "provider:claude"
+        )
+    ),
+    "Menu must dispatch the existing provider command inside its topic"
+  );
+  const generalSetting = callback(0);
+  if (generalSetting.callback_query) {
+    generalSetting.callback_query.data = "menu:permission:ask";
+  }
+  await bot.handleUpdate(generalSetting);
+  assert.equal(operations.getSettings("c:-100").approvalPolicy, "automatic");
+  const menuPermission = callback(7);
+  if (menuPermission.callback_query) {
+    menuPermission.callback_query.data = "menu:permission:ask";
+  }
+  await bot.handleUpdate(menuPermission);
+  assert.equal(operations.getSettings("t:-100:7").approvalPolicy, "ask");
+  assert.equal(operations.getSettings("t:-100:8").approvalPolicy, "automatic");
+  assert.equal(agentCalls, 0);
   await bot.handleUpdate(message("/nuova", 0));
   assert(
     calls.some((c) =>
