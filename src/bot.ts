@@ -51,6 +51,7 @@ import {
   UPDATE_RECEIVED_MARKER,
   UpdateReceivedEvent,
 } from "./observability";
+import { createProjectFolder } from "./project-folders";
 import { runtime } from "./runtime";
 import {
   installThreadTransformer,
@@ -534,7 +535,13 @@ export function createBot(
   const allowedChats = new Set(allowedChatIds);
   const deniedChatsLogged = new Set<number>();
   /** Commands usable in a group's General area (everything else needs a topic). */
-  const controlCommands = new Set(["start", "help", "nuova", "elenco"]);
+  const controlCommands = new Set([
+    "start",
+    "help",
+    "nuova",
+    "nuovo_progetto",
+    "elenco",
+  ]);
   /** Whether an update in the General area may proceed to the handlers. */
   const controlAllowed = (ctx: Context) => {
     if ((ctx.callbackQuery?.data ?? "").startsWith("nt_")) {
@@ -1058,24 +1065,26 @@ export function createBot(
   /** Project picker for /nuova (no "General": a topic is always one project). */
   function buildTopicProjectsMessage(page: number) {
     const projects = listProjects(projectsDir);
-    if (projects.length === 0) {
-      return null;
-    }
-    const totalPages = Math.ceil(projects.length / PROJECT_PAGE_SIZE);
+    const totalPages = Math.max(
+      1,
+      Math.ceil(projects.length / PROJECT_PAGE_SIZE)
+    );
     const safePage = Math.max(0, Math.min(page, totalPages - 1));
     const pageSlice = projects.slice(
       safePage * PROJECT_PAGE_SIZE,
       (safePage + 1) * PROJECT_PAGE_SIZE
     );
-    const keyboard = new InlineKeyboard();
+    const keyboard = new InlineKeyboard()
+      .text("➕ Nuovo progetto", "nt_create")
+      .row();
     for (const name of pageSlice) {
       keyboard.text(name, `nt_project:${name}`).row();
     }
     if (safePage > 0) {
-      keyboard.text("<< Prev", `nt_projects:${safePage - 1}`);
+      keyboard.text("← Precedenti", `nt_projects:${safePage - 1}`);
     }
     if (safePage < totalPages - 1) {
-      keyboard.text("Next >>", `nt_projects:${safePage + 1}`);
+      keyboard.text("Successivi →", `nt_projects:${safePage + 1}`);
     }
     if (totalPages > 1) {
       keyboard.row();
@@ -1083,7 +1092,7 @@ export function createBot(
     const pageIndicator =
       totalPages > 1 ? ` (${safePage + 1}/${totalPages})` : "";
     return {
-      text: `Nuova sessione: scegli il progetto${pageIndicator}`,
+      text: `Apri un argomento: scegli un progetto esistente${pageIndicator}, oppure crea un nuovo progetto con il pulsante qui sotto.`,
       keyboard,
     };
   }
@@ -1127,6 +1136,38 @@ export function createBot(
     });
     return created;
   }
+
+  const newProjectHelp = `Per creare un progetto e la sua cartella su Ubuntu, scrivi:\n/nuovo_progetto nome-progetto\n\nCartella di destinazione: ${projectsDir}\nPoi scegli Claude o Codex per aprire l'argomento. Per un progetto già presente usa /nuova.`;
+  bot.callbackQuery("nt_create", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await ctx.reply(newProjectHelp);
+  });
+  bot.command("nuovo_progetto", async (ctx) => {
+    if (getScope(ctx).kind === "private") {
+      await ctx.reply(
+        "Per creare un progetto con il suo argomento, usa /nuovo_progetto nel gruppo Dev."
+      );
+      return;
+    }
+    const name = String(ctx.match ?? "").trim();
+    if (!name) {
+      await ctx.reply(newProjectHelp);
+      return;
+    }
+    try {
+      const path = createProjectFolder(projectsDir, name);
+      await ctx.reply(
+        `Progetto creato: ${name}\nCartella: ${path}\nScegli l'agente per aprire il nuovo argomento:`,
+        { reply_markup: providerKeyboard(name) }
+      );
+    } catch (error) {
+      await ctx.reply(
+        error instanceof Error
+          ? error.message
+          : "Creazione del progetto non riuscita."
+      );
+    }
+  });
 
   bot.command("nuova", async (ctx) => {
     const scope = getScope(ctx);
@@ -1204,6 +1245,12 @@ export function createBot(
     const projectName = ctx.match?.[1] ?? "";
     const provider = ctx.match?.[2] as ProviderId;
     const scope = getScope(ctx);
+    if (!listProjects(projectsDir).includes(projectName)) {
+      await ctx.answerCallbackQuery({
+        text: "Progetto non trovato. Riapri la lista con /nuova.",
+      });
+      return;
+    }
     try {
       const created = await createTopicAndAnnounce(
         ctx,
@@ -1322,6 +1369,8 @@ export function createBot(
     await ctx.reply(
       [
         "<b>Commands:</b>",
+        "/nuova — apri un argomento dalla lista dei progetti",
+        "/nuovo_progetto nome — crea cartella e prepara il nuovo argomento",
         "/projects — switch active project",
         "/provider — switch coding agent provider",
         "/model — switch model for the active provider",

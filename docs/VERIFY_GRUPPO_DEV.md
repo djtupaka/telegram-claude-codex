@@ -39,3 +39,18 @@ Dopo un solo riavvio verifica nuovo PID, servizio attivo e marker di avvio della
 ## Limiti di verifica e configurazione
 
 Le approvazioni sono verificate sul contratto SDK locale e con callback simulate; non è stata avviata una sessione Claude reale di prova. I webhook nativi di Coolify/TrueNAS/Tdarr non sono stati configurati; è disponibile un ingresso normalizzato locale, disabilitato senza configurazione. Nessun programma live è stato creato per i test. Costi storici non ricostruiti: le statistiche iniziano con l'attivazione. Il piano preesistente `docs/superpowers/plans/2026-09-10-safe-astra-update.md` resta escluso dal commit.
+
+## Aggiornamento: creazione progetto e scelta dalla lista
+
+Richiesta successiva di Nicolas, 14 settembre 2026: creare la cartella Ubuntu per i nuovi progetti e poter aprire un argomento scegliendo un progetto esistente. Esplicitamente esclusi collegamenti per notifiche, già gestiti da altri bot.
+
+Base `06af81efbae07e8888f17e3be1f957a533a7d35b`. Aggiunti pulsante Nuovo progetto e comando `/nuovo_progetto nome-progetto`; `/nuova` conserva la lista dei progetti esistenti e la scelta Claude/Codex. Creazione limitata a cartelle nuove direttamente sotto `PROJECTS_DIR`, senza sovrascrivere file, cartelle o collegamenti.
+
+RED osservato nei test di creazione e nel vero handler `/nuova` isolato (pulsante mancante); GREEN dopo la modifica. Harness esteso a creazione della cartella, ricomparsa nella lista, collegamento dell'argomento, rifiuto di utenti/gruppi non autorizzati e callback con percorso esterno. Review indipendente senza bloccanti; corretta anche la segnalazione in italiano quando manca la radice configurata.
+
+Verifica finale: `bun test` **270 pass, 0 fail**, 767 assertion, 40 file; `bun run typecheck`, `bun run lint` e `git diff --check` exit 0. I due avvisi di complessità del lint sono quelli già documentati. Nessun progetto o argomento live creato per i test.
+
+Backup dello stato ripristinato e confrontato byte per byte:
+`/home/djtupaka/projects/dev-bot/.data/backups/project-picker-20260914T100425Z.tar.gz`.
+SHA-256 `18d774f77121903e9ddd1ca5bf53d2ac200ca7bd0c3fd6cd6b59bbf2dfd82bdf`.
+Attivazione tramite lo stesso riavvio differito e ricevuta legata al nuovo commit, senza interrompere questa sessione.

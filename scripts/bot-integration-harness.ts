@@ -2,7 +2,7 @@
 /** Invoked only by bot-integration.test.ts inside a temporary copy of src. */
 import { mock } from "bun:test";
 import assert from "node:assert/strict";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Update } from "grammy/types";
 import type { AgentEvent, RunOptions } from "../src/agent/types";
@@ -102,6 +102,12 @@ let messageId = 100;
 bot.api.config.use((_previous, method, payload) => {
   const p = payload as Record<string, unknown>;
   calls.push({ method, payload: p });
+  if (method === "createForumTopic") {
+    return Promise.resolve({
+      ok: true,
+      result: { message_thread_id: 55, name: p.name },
+    }) as never;
+  }
   const result =
     method === "sendMessage"
       ? {
@@ -157,6 +163,70 @@ function callback(thread = 7, user = 42, chat = -100): Update {
   };
 }
 try {
+  await bot.handleUpdate(message("/nuova", 0));
+  assert(
+    calls.some((c) =>
+      (JSON.stringify(c.payload.reply_markup) ?? "").includes("nt_create")
+    ),
+    "New-topic picker must offer folder creation"
+  );
+  await bot.handleUpdate(message("/nuovo_progetto demo-created", 0));
+  assert(
+    existsSync(join(root, "demo-created")),
+    "New project must create its folder"
+  );
+  assert(
+    calls.some((c) =>
+      (JSON.stringify(c.payload.reply_markup) ?? "").includes(
+        "nt_provider:demo-created:claude"
+      )
+    )
+  );
+  writeFileSync(join(root, "demo-created", "keep.txt"), "original");
+  await bot.handleUpdate(message("/nuovo_progetto demo-created", 0));
+  assert.equal(
+    readFileSync(join(root, "demo-created", "keep.txt"), "utf8"),
+    "original"
+  );
+  await bot.handleUpdate(message("/nuovo_progetto forbidden", 0, 99));
+  assert(!existsSync(join(root, "forbidden")));
+  await bot.handleUpdate(
+    message("/nuovo_progetto forbidden-group", 0, 42, -999)
+  );
+  assert(!existsSync(join(root, "forbidden-group")));
+  await bot.handleUpdate(message("/nuova", 0));
+  assert(
+    calls.some((c) =>
+      (JSON.stringify(c.payload.reply_markup) ?? "").includes(
+        "nt_project:demo-created"
+      )
+    )
+  );
+  const chooseProvider = callback(0);
+  if (chooseProvider.callback_query) {
+    chooseProvider.callback_query.data = "nt_provider:demo-created:claude";
+  }
+  await bot.handleUpdate(chooseProvider);
+  const storedTopics = JSON.parse(
+    readFileSync(join(root, ".data", "topics.json"), "utf8")
+  );
+  assert.equal(
+    storedTopics.topics["t:-100:55"].activeProject,
+    join(root, "demo-created")
+  );
+  assert.equal(storedTopics.topics["t:-100:55"].activeProvider, "claude");
+  const invalidProvider = callback(0);
+  if (invalidProvider.callback_query) {
+    invalidProvider.callback_query.data = "nt_provider:..:claude";
+  }
+  const topicsBeforeInvalid = calls.filter(
+    (c) => c.method === "createForumTopic"
+  ).length;
+  await bot.handleUpdate(invalidProvider);
+  assert.equal(
+    calls.filter((c) => c.method === "createForumTopic").length,
+    topicsBeforeInvalid
+  );
   await bot.handleUpdate(message("/permessi chiedi"));
   assert.equal(operations.getSettings("t:-100:7").approvalPolicy, "ask");
   assert.equal(operations.getSettings("t:-100:8").approvalPolicy, "automatic");

@@ -8,10 +8,20 @@ Ripresa degli inoltri del 14 settembre 2026: lavori simultanei su progetti disti
 
 Ogni argomento conserva progetto, provider, modello, impegno e conversazione propri. Nodarr e PremelOne possono lavorare contemporaneamente in argomenti separati. Il limite globale resta `MAX_CONCURRENT_RUNS=4` predefinito. Una quinta esecuzione viene rifiutata dal limite: non esiste una coda globale. Nello stesso argomento i messaggi si accodano, anche durante un programma automatico, e riprendono alla sua conclusione. Le sessioni separate non isolano i file: due lavori sullo stesso repository devono coordinarsi.
 
+## Progetti nuovi ed esistenti
+
+`/nuova` mostra le cartelle già presenti nella directory `PROJECTS_DIR` di Ubuntu. Scegliere un progetto e poi Claude o Codex crea un argomento collegato a quella cartella, senza ricreare il progetto.
+
+Il pulsante **Nuovo progetto** spiega come usare `/nuovo_progetto nome-progetto`: il comando crea una cartella vuota direttamente sotto `PROJECTS_DIR` (nell'installazione di Nicolas `/home/djtupaka/projects`), poi propone l'agente per aprire l'argomento. Il nome deve contenere da 1 a 40 lettere, numeri, trattini o underscore e iniziare con una lettera o un numero. Cartelle, file e collegamenti già presenti non vengono sovrascritti. Non vengono inizializzati Git, template o servizi. Se si abbandona la scelta dell'agente, la cartella creata rimane disponibile nella lista di `/nuova`.
+
+Creare manualmente un argomento dall'interfaccia Telegram non crea una cartella su Ubuntu: usare i comandi del bot per collegare le due cose.
+
 ## Comandi
 
 | Comando | Risultato |
 | --- | --- |
+| `/nuova` | Sceglie un progetto esistente per aprire un argomento; offre anche Nuovo progetto. |
+| `/nuovo_progetto nome-progetto` | Crea la cartella su Ubuntu e propone l’agente per il nuovo argomento. |
 | `/permessi` | Mostra il criterio della conversazione. |
 | `/permessi chiedi` | Con Claude, richiede un pulsante per **ogni** strumento; Codex resta bloccato. |
 | `/permessi automatici` | Usa l'esecuzione automatica consueta. |
@@ -44,6 +54,8 @@ La radice è `ATTACHMENTS_DIR`, in alternativa il precedente `UPLOADS_DIR`, altr
 Lo script di invio conserva il nome del documento. Nei gruppi richiede sia un gruppo autorizzato sia l'identificativo di un argomento registrato (`--thread`), e conserva in `.data/deliveries` una ricevuta con SHA-256 e identificativo del messaggio. Un errore nella ricevuta dopo l'invio viene segnalato senza suggerire un reinvio automatico. I file vengono inviati soltanto su richiesta esplicita dell'utente.
 
 ## Automazioni ed eventi
+
+**Decisione di Nicolas del 14 settembre 2026:** non configurare collegamenti per notifiche di Coolify, TrueNAS, Tdarr o altri servizi; sono già gestiti da altri bot. La predisposizione tecnica sotto descritta non costituisce un'attività pendente né autorizza l'attivazione di webhook.
 
 Un programma conserva progetto/provider/modello/impegno scelti al momento della creazione; i permessi vengono rivalutati all'esecuzione. Se un argomento è stato rimosso, il gruppo non è più autorizzato o il progetto è cambiato, il programma non parte. Le automazioni non riprendono né sostituiscono la sessione manuale. Un piano prodotto automaticamente viene segnalato senza pulsanti che possano eseguire un vecchio piano manuale.
 
