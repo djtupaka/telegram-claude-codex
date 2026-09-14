@@ -4,7 +4,7 @@ import { sanitizeCodexEnv } from "./codex-env";
 describe("sanitizeCodexEnv", () => {
   test("keeps runtime variables but removes bot-only credentials", () => {
     const env = sanitizeCodexEnv({
-      ALLOWED_USER_ID: "74919235",
+      ALLOWED_USER_ID: "12345678",
       ANTHROPIC_API_KEY: "anthropic-secret",
       BOT_TOKEN: "telegram-secret",
       CLAUDECODE: "1",
@@ -13,7 +13,7 @@ describe("sanitizeCodexEnv", () => {
       HOME: "/home/test",
       OTEL_EXPORTER_OTLP_HEADERS: "Authorization=secret",
       PATH: "/usr/bin",
-      TELEGRAM_CHAT_ID: "74919235",
+      TELEGRAM_CHAT_ID: "12345678",
       UNDEFINED_VALUE: undefined,
     });
 

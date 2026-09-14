@@ -732,7 +732,6 @@ export function createBot(
         rootDir: join(value.state.activeProject, "telegram"),
         layout: "project",
         legacyRootDir: legacyAttachmentsRoot,
-        backupDir: process.env.ATTACHMENTS_BACKUP_DIR?.trim(),
         busy: [...scopeStates.values()].some(
           (state) =>
             busy(state.runKey) &&

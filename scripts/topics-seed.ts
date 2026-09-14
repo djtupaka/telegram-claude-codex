@@ -1,7 +1,7 @@
 /**
  * One-shot: create the initial forum topics (sessions) in the Dev group.
  * Usage: bun run scripts/topics-seed.ts <chatId> <project>:<provider>[:<name>] ...
- * Example: bun run scripts/topics-seed.ts -1004307670930 premelone:codex premelone:claude
+ * Example: bun run scripts/topics-seed.ts -1001234567890 progetto:codex progetto:claude
  * Reads BOT_TOKEN and PROJECTS_DIR from .env (bun loads it automatically).
  */
 import { Api } from "grammy";

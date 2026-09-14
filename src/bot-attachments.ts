@@ -3,14 +3,12 @@ import { basename } from "node:path";
 import { type Bot, type Context, InlineKeyboard } from "grammy";
 import {
   type AttachmentLocation,
-  attachmentPurgeAvailability,
   type ManagedAttachment,
   purgeAttachment,
   scanAttachments,
   setAttachmentArchived,
 } from "./attachment-manager";
 export interface AttachmentContext extends AttachmentLocation {
-  backupDir?: string;
   busy: boolean;
   scopeKey: string;
 }
@@ -54,7 +52,6 @@ export function installAttachmentManager(options: {
       location.scopeKey,
       location.projectPath,
       location.rootDir,
-      location.backupDir,
       location.layout,
       location.legacyRootDir,
     ]);
@@ -112,7 +109,7 @@ export function installAttachmentManager(options: {
     }
   }
   async function showDetail(request: AttachmentAction) {
-    const { ctx, id, view, index, entry, location } = request;
+    const { ctx, id, view, index, entry } = request;
     const keyboard = new InlineKeyboard();
 
     view.pending = undefined;
@@ -127,61 +124,43 @@ export function installAttachmentManager(options: {
         "← Elenco",
         `attachments:${id}:page:${Math.floor(index / PAGE_SIZE)}`
       );
-    const purgeUnavailable = await attachmentPurgeAvailability(
-      location,
-      location.backupDir,
-      entry
-    );
-    if (entry.archived && !purgeUnavailable) {
-      keyboard.row().text("Libera spazio…", `attachments:${id}:purge:${index}`);
-    }
+    keyboard
+      .row()
+      .text("Elimina definitivamente…", `attachments:${id}:purge:${index}`);
     await ctx.editMessageText(
-      `${display(entry.record.originalName)}\n${bytes(entry.record.size)} · ${display(entry.record.mimeType)}\nRicevuto: ${entry.record.receivedAt}\nOrigine: ${display(entry.record.scopeKey)}\nStato: ${entry.archived ? "archiviato" : "attivo"}\nSHA-256: ${entry.record.sha256}\n\nL’originale resta disponibile alle sessioni.${entry.archived && purgeUnavailable ? `\n\n${purgeUnavailable}` : ""}`,
+      `${display(entry.record.originalName)}\n${bytes(entry.record.size)} · ${display(entry.record.mimeType)}\nRicevuto: ${entry.record.receivedAt}\nOrigine: ${display(entry.record.scopeKey)}\nStato: ${entry.archived ? "archiviato" : "attivo"}\nSHA-256: ${entry.record.sha256}\n\nL’originale resta disponibile alle sessioni.`,
       { reply_markup: keyboard }
     );
     return;
   }
   async function previewPurge(request: AttachmentAction) {
-    const { ctx, id, view, index, entry, location } = request;
+    const { ctx, id, view, index, entry } = request;
     const keyboard = new InlineKeyboard();
-    if (!entry.archived) {
-      return;
-    }
-
-    const unavailable = await attachmentPurgeAvailability(
-      location,
-      location.backupDir,
-      entry
-    );
-    if (unavailable) {
-      await ctx.reply(unavailable);
-      return;
-    }
     view.purgePending = index;
     keyboard
       .text(
-        "Conferma rimozione dal disco",
+        "Conferma eliminazione definitiva",
         `attachments:${id}:purgeconfirm:${index}`
       )
       .row()
       .text("Annulla", `attachments:${id}:detail:${index}`);
     await ctx.editMessageText(
-      `Rimuovere dal disco «${display(entry.record.originalName)}» (${bytes(entry.record.size)})?\n\nPrima verrà verificata una copia sul volume backup separato. Il percorso originale sarà eliminato: i riferimenti nelle conversazioni precedenti non funzioneranno più. Il ripristino dal backup richiederà intervento manuale. Nessun altro allegato verrà rimosso.`,
+      `Rimuovere dal disco «${display(entry.record.originalName)}» (${bytes(entry.record.size)})?\n\nEliminazione definitiva senza backup. Il file non sarà recuperabile dal bot e i riferimenti nelle conversazioni precedenti non funzioneranno più. Nessun altro allegato verrà rimosso.`,
       { reply_markup: keyboard }
     );
     return;
   }
   async function confirmPurge(request: AttachmentAction) {
     const { ctx, id, view, index, entry, location } = request;
-    if (view.purgePending !== index || !location.backupDir) {
+    if (view.purgePending !== index) {
       return;
     }
 
     view.purgePending = undefined;
-    const result = await purgeAttachment(location, entry, location.backupDir);
+    const result = await purgeAttachment(location, entry);
     views.delete(id);
     await ctx.editMessageText(
-      `Originale rimosso dal volume archivio: ${bytes(result.bytes)}. Copia verificata conservata sul volume backup. I vecchi riferimenti al file non sono più validi. Usa /allegati per aggiornare l’elenco.`
+      `Allegato eliminato definitivamente: ${bytes(result.bytes)}. Nessuna copia di backup creata. I vecchi riferimenti al file non sono più validi. Usa /allegati per aggiornare l’elenco.`
     );
     return;
   }

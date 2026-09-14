@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { constants, type Dirent } from "node:fs";
 import {
   lstat,
@@ -263,61 +263,11 @@ export async function setAttachmentArchived(
   }
 }
 
-export async function attachmentPurgeAvailability(
-  allowedLocation: AttachmentLocation,
-  backupDir?: string,
-  entry?: ManagedAttachment
-): Promise<string | undefined> {
-  const location = entry
-    ? entryLocation(allowedLocation, entry.record.path)
-    : allowedLocation;
-  if (!backupDir) {
-    return "Configura ATTACHMENTS_BACKUP_DIR su un volume separato per liberare spazio.";
-  }
-  try {
-    const backup = resolve(backupDir);
-    if (
-      (await realpath(backup)) !== backup ||
-      !(await lstat(backup)).isDirectory()
-    ) {
-      return "Il percorso backup deve essere una directory reale, senza collegamenti simbolici.";
-    }
-    if (
-      (await lstat(projectDirectory(location))).dev ===
-      (await lstat(backup)).dev
-    ) {
-      return "Il backup deve risiedere su un filesystem diverso: sullo stesso disco non si libera spazio.";
-    }
-    return undefined;
-  } catch {
-    return "Directory backup non disponibile. Configura un volume separato già montato.";
-  }
-}
-async function durableBackup(path: string, data: Uint8Array): Promise<void> {
-  const handle = await open(path, "wx", 0o600);
-  try {
-    await handle.writeFile(data);
-    await handle.sync();
-  } finally {
-    await handle.close();
-  }
-}
-
 export async function purgeAttachment(
   allowedLocation: AttachmentLocation,
-  entry: ManagedAttachment,
-  backupDir: string
+  entry: ManagedAttachment
 ) {
-  if (!entry.archived) {
-    throw new Error("L’allegato deve essere archiviato prima della rimozione.");
-  }
   const location = entryLocation(allowedLocation, entry.record.path);
-  const unavailable = await attachmentPurgeAvailability(location, backupDir);
-  if (unavailable) {
-    throw new Error(unavailable);
-  }
-  // Reuses full path, preview and payload validation without changing archive state.
-  await setAttachmentArchived(location, entry, true);
   const file = entry.record.path;
   if (locks.has(file)) {
     throw new Error("Operazione già in corso.");
@@ -325,36 +275,12 @@ export async function purgeAttachment(
   locks.add(file);
   try {
     const current = await checkedEntry(location, `${file}.metadata.json`);
-    if (current.fingerprint !== entry.fingerprint || !current.archived) {
+    if (current.fingerprint !== entry.fingerprint) {
       throw new Error("Anteprima scaduta.");
     }
     const payload = await regularRead(file, 100 * 1024 * 1024);
     if (hash(payload) !== entry.record.sha256) {
       throw new Error("Integrità originale non verificata.");
-    }
-    const backupPath = join(
-      resolve(backupDir),
-      `${randomUUID()}-${basename(file)}`
-    );
-    await durableBackup(backupPath, payload);
-    const metadata = await regularRead(`${file}.metadata.json`, 65_536);
-    await durableBackup(`${backupPath}.metadata.json`, metadata);
-    const backupDirectoryHandle = await open(resolve(backupDir), "r");
-    try {
-      await backupDirectoryHandle.sync();
-    } finally {
-      await backupDirectoryHandle.close();
-    }
-    const backupPayload = await regularRead(backupPath, 100 * 1024 * 1024);
-    const backupMetadata = await regularRead(
-      `${backupPath}.metadata.json`,
-      65_536
-    );
-    if (
-      hash(backupPayload) !== entry.record.sha256 ||
-      !metadata.equals(backupMetadata)
-    ) {
-      throw new Error("Backup non verificato: originale conservato.");
     }
     const latest = await checkedEntry(location, `${file}.metadata.json`);
     if (latest.fingerprint !== entry.fingerprint) {
@@ -362,8 +288,10 @@ export async function purgeAttachment(
     }
     await unlink(file);
     await unlink(`${file}.metadata.json`);
-    await unlink(`${file}.archived.json`);
-    return { backupPath, bytes: entry.record.size };
+    if (current.archived) {
+      await unlink(`${file}.archived.json`);
+    }
+    return { bytes: entry.record.size };
   } finally {
     locks.delete(file);
   }

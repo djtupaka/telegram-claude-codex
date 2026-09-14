@@ -1,6 +1,6 @@
 # Installazione personale del bot Telegram
 
-Ogni amico deve usare una propria installazione, un proprio bot Telegram e il
+Ogni installazione deve usare una propria installazione, un proprio bot Telegram e il
 proprio account del provider. Non copiare `.env`, `.data`, sessioni, credenziali o
 allegati di un'altra persona. Il bot può eseguire strumenti e modificare file con
 i permessi dell'utente che lo avvia: usare un account di sistema dedicato quando
@@ -103,4 +103,4 @@ dati del bot e ai propri progetti. I manifest contengono percorsi assoluti: in
 caso di ripristino su un'altra macchina mantenere i percorsi oppure considerare
 quelli registrati come provenienza della vecchia installazione.
 
-Per gli aggiornamenti protetti e il ritorno alla versione precedente consultare [AGGIORNAMENTI.md](AGGIORNAMENTI.md). La gestione dello spazio e del backup degli allegati è descritta in [ALLEGATI.md](ALLEGATI.md).
+Per gli aggiornamenti protetti e il ritorno alla versione precedente consultare [AGGIORNAMENTI.md](AGGIORNAMENTI.md). La gestione e l’eliminazione degli allegati è descritta in [ALLEGATI.md](ALLEGATI.md).

@@ -2,7 +2,7 @@
 
 ## Ambito approvato
 
-Ripresa degli inoltri del 14 settembre 2026: lavori simultanei su progetti distinti, approvazioni Telegram, programmi, eventi dai servizi, notifiche di conclusione, statistiche, riepiloghi e installazione autonoma per amici. Nessuna modifica applicativa o ai dati commerciali di PremelOne.
+Gestione di progetti, conversazioni simultanee, approvazioni, programmi, notifiche e statistiche dal gruppo Telegram.
 
 ## Lavori simultanei
 
@@ -69,13 +69,13 @@ I nuovi documenti, foto e vocali di un progetto vengono conservati in:
 
 La cartella contiene un `.gitignore` interno per evitare commit accidentali. Originale e metadati JSON rimangono affiancati; nomi uguali non sovrascrivono file precedenti. I file ricevuti senza un progetto selezionato restano nell'archivio centrale. Gli allegati precedenti non vengono spostati: `/allegati` unisce la nuova cartella con l'archivio configurato da `ATTACHMENTS_DIR`, `UPLOADS_DIR` o `.data/attachments`.
 
-Ricerca, dettagli, archiviazione reversibile e liberazione dello spazio con backup sono descritti in [ALLEGATI.md](ALLEGATI.md). La rimozione richiede un file archiviato, una conferma esplicita e un volume backup separato configurato: non viene eseguita durante questo aggiornamento.
+Ricerca, dettagli, archiviazione reversibile ed eliminazione definitiva sono descritti in [ALLEGATI.md](ALLEGATI.md). L’eliminazione richiede una conferma esplicita sul singolo file, attivo o archiviato, e non crea né richiede un backup.
 
 Lo script di invio conserva il nome del documento. Nei gruppi richiede sia un gruppo autorizzato sia l'identificativo di un argomento registrato (`--thread`), e conserva in `.data/deliveries` una ricevuta con SHA-256 e identificativo del messaggio. Un errore nella ricevuta dopo l'invio viene segnalato senza suggerire un reinvio automatico. I file vengono inviati soltanto su richiesta esplicita dell'utente.
 
 ## Automazioni ed eventi
 
-**Decisione di Nicolas del 14 settembre 2026:** non configurare collegamenti per notifiche di Coolify, TrueNAS, Tdarr o altri servizi; sono già gestiti da altri bot. La predisposizione tecnica sotto descritta non costituisce un'attività pendente né autorizza l'attivazione di webhook.
+Le integrazioni per eventi esterni sono facoltative e disattivate finché non vengono configurate esplicitamente.
 
 Un programma conserva progetto/provider/modello/impegno scelti al momento della creazione; i permessi vengono rivalutati all'esecuzione. Se un argomento è stato rimosso, il gruppo non è più autorizzato o il progetto è cambiato, il programma non parte. Le automazioni non riprendono né sostituiscono la sessione manuale. Un piano prodotto automaticamente viene segnalato senza pulsanti che possano eseguire un vecchio piano manuale.
 
@@ -85,7 +85,7 @@ Il payload di un evento è un dato non attendibile: con Claude la diagnosi usa s
 
 ## Installazione indipendente
 
-Seguire [INSTALLAZIONE_IT.md](INSTALLAZIONE_IT.md). L'amico usa il proprio server, bot, account e credenziali. Il setup non copia `.env`, sessioni o allegati di questa installazione.
+Seguire [INSTALLAZIONE_IT.md](INSTALLAZIONE_IT.md). Ogni installazione usa server, bot, account e credenziali propri. Il setup non copia `.env`, sessioni o allegati di questa installazione.
 
 ## Verifica e attivazione
 

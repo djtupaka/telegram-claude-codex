@@ -11,14 +11,14 @@ const allowed = new Set([-1_004_307_670_930]);
 describe("resolveScope", () => {
   test("private chat keeps the user-keyed scope", () => {
     const scope = resolveScope(
-      { chat: { id: 74_919_235, type: "private" }, from: { id: 74_919_235 } },
+      { chat: { id: 12_345_678, type: "private" }, from: { id: 12_345_678 } },
       allowed
     );
     expect(scope).toEqual({
       kind: "private",
-      key: "u:74919235",
-      chatId: 74_919_235,
-      userId: 74_919_235,
+      key: "u:12345678",
+      chatId: 12_345_678,
+      userId: 12_345_678,
     });
   });
 
@@ -26,7 +26,7 @@ describe("resolveScope", () => {
     const scope = resolveScope(
       {
         chat: { id: -1_004_307_670_930, type: "supergroup" },
-        from: { id: 74_919_235 },
+        from: { id: 12_345_678 },
         msg: { is_topic_message: true, message_thread_id: 42 },
       },
       allowed
@@ -40,7 +40,7 @@ describe("resolveScope", () => {
     const scope = resolveScope(
       {
         chat: { id: -1_004_307_670_930, type: "supergroup" },
-        from: { id: 74_919_235 },
+        from: { id: 12_345_678 },
         msg: {},
       },
       allowed
@@ -52,7 +52,7 @@ describe("resolveScope", () => {
     const scope = resolveScope(
       {
         chat: { id: -1001, type: "supergroup" },
-        from: { id: 74_919_235 },
+        from: { id: 12_345_678 },
         msg: { is_topic_message: true, message_thread_id: 7 },
       },
       allowed

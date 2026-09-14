@@ -92,4 +92,26 @@ test("callback confirmation requires same user/project, preview and idle context
   location.busy = false;
   await callback(ctx as unknown as Context);
   expect((await scanAttachments(location)).entries[0]?.archived).toBe(true);
+  await command(ctx as unknown as Context);
+  const latest =
+    messages.at(-1)?.options?.reply_markup?.inline_keyboard[0]?.[0]
+      ?.callback_data;
+  if (!latest) {
+    throw new Error("Missing fresh callback");
+  }
+  ctx.callbackQuery.data = latest.replace(":detail:", ":purgeconfirm:");
+  await callback(ctx as unknown as Context);
+  expect((await scanAttachments(location)).entries).toHaveLength(1);
+  ctx.callbackQuery.data = latest.replace(":detail:", ":purge:");
+  await callback(ctx as unknown as Context);
+  expect(messages.at(-1)?.text).toContain("senza backup");
+  ctx.callbackQuery.data = latest.replace(":detail:", ":purgeconfirm:");
+  ctx.from.id = 2;
+  await callback(ctx as unknown as Context);
+  expect((await scanAttachments(location)).entries).toHaveLength(1);
+  ctx.from.id = 1;
+  await callback(ctx as unknown as Context);
+  expect((await scanAttachments(location)).entries).toHaveLength(0);
+  await callback(ctx as unknown as Context);
+  expect(JSON.stringify(alerts)).toContain("scaduta");
 });

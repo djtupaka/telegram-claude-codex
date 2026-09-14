@@ -91,39 +91,33 @@ test("malicious paths, malformed manifests and symlinks are skipped", async () =
   expect((await scanAttachments(f)).entries.length).toBe(0);
 });
 
-test("purge refuses a backup on the same filesystem", async () => {
+test("purge deletes an active original and metadata without a backup", async () => {
   const f = await fixture();
   const entry = (await scanAttachments(f)).entries[0];
   if (!entry) {
     throw new Error("Missing fixture");
   }
-  await setAttachmentArchived(f, entry, true);
-  const archived = (await scanAttachments(f)).entries[0];
-  if (!archived) {
-    throw new Error("Missing fixture");
-  }
-  await expect(purgeAttachment(f, archived, f.projectPath)).rejects.toThrow(
-    "filesystem"
-  );
-  expect(await readFile(f.record.path, "utf8")).toBe("hello");
+  const result = await purgeAttachment(f, entry);
+  expect(result.bytes).toBe(5);
+  await expect(readFile(f.record.path)).rejects.toThrow();
+  await expect(readFile(`${f.record.path}.metadata.json`)).rejects.toThrow();
+  expect((await scanAttachments(f)).entries).toHaveLength(0);
 });
-test("purge backs up and verifies on a separate filesystem before removing an archived original", async () => {
+test("purge rejects changed files and deletes archived markers only after validation", async () => {
   const f = await fixture();
-  const backup = await mkdtemp("/dev/shm/dev-bot-backup-");
-  dirs.push(backup);
   const entry = (await scanAttachments(f)).entries[0];
   if (!entry) {
     throw new Error("Missing fixture");
   }
-  await expect(purgeAttachment(f, entry, backup)).rejects.toThrow("archiviato");
   await setAttachmentArchived(f, entry, true);
+  await expect(purgeAttachment(f, entry)).rejects.toThrow();
+  expect(await readFile(f.record.path, "utf8")).toBe("hello");
   const archived = (await scanAttachments(f)).entries[0];
   if (!archived) {
     throw new Error("Missing fixture");
   }
-  const result = await purgeAttachment(f, archived, backup);
-  expect(await readFile(result.backupPath, "utf8")).toBe("hello");
-  expect((await scanAttachments(f)).entries.length).toBe(0);
+  await purgeAttachment(f, archived);
+  await expect(readFile(`${f.record.path}.archived.json`)).rejects.toThrow();
 });
 
 test("unifies new project telegram originals and legacy roots without migrating them", async () => {

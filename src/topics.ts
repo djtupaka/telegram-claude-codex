@@ -20,7 +20,7 @@ const PROJECT_LABELS: Readonly<Record<string, string>> = {
   truenas: "TrueNAS",
 };
 
-/** Short provider tags used in topic names (Nicolas: CC = Claude Code, CX = Codex). */
+/** Short provider tags used in topic names (CC = Claude Code, CX = Codex). */
 const PROVIDER_SHORT: Readonly<Record<ProviderId, string>> = {
   claude: "CC",
   codex: "CX",
