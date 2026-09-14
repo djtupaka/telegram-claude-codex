@@ -26,7 +26,11 @@ I link degli argomenti seguono il [formato ufficiale Telegram](https://core.tele
 
 `/nuova` mostra le cartelle già presenti nella directory `PROJECTS_DIR` di Ubuntu. Scegliere un progetto e poi Claude o Codex crea un argomento collegato a quella cartella, senza ricreare il progetto.
 
-Il pulsante **Nuovo progetto** spiega come usare `/nuovo_progetto nome-progetto`: il comando crea una cartella vuota direttamente sotto `PROJECTS_DIR` (nell'installazione di Nicolas `/home/djtupaka/projects`), poi propone l'agente per aprire l'argomento. Il nome deve contenere da 1 a 40 lettere, numeri, trattini o underscore e iniziare con una lettera o un numero. Cartelle, file e collegamenti già presenti non vengono sovrascritti. Non vengono inizializzati Git, template o servizi. Se si abbandona la scelta dell'agente, la cartella creata rimane disponibile nella lista di `/nuova`.
+Il pulsante **Nuovo progetto** e `/nuovo_progetto` senza nome aprono la procedura guidata: rispondere al messaggio del bot con il nome della cartella, poi scegliere Claude o Codex. Soltanto a questa scelta vengono creati cartella e argomento. Il pulsante **Annulla** interrompe la procedura senza creare cartelle. Ogni procedura appartiene all'utente e all'argomento da cui è stata aperta; scade dopo dieci minuti e non sopravvive al riavvio del bot.
+
+Il nome deve contenere da 1 a 40 lettere, numeri, trattini o underscore e iniziare con una lettera o un numero. Cartelle, file e collegamenti già presenti non vengono sovrascritti. Non vengono inizializzati Git, template o servizi. Se la creazione dell'argomento fallisce dopo la creazione della cartella, questa viene conservata. Controllare prima `/elenco` e gli argomenti del gruppo: un errore nella conferma potrebbe arrivare dopo la creazione. Usare `/nuova` soltanto se l'argomento non esiste.
+
+Resta disponibile `/nuovo_progetto nome-progetto`: questa scorciatoia conserva il comportamento precedente, creando subito la cartella e proponendo la scelta dell'assistente.
 
 Creare manualmente un argomento dall'interfaccia Telegram non crea una cartella su Ubuntu: usare i comandi del bot per collegare le due cose.
 

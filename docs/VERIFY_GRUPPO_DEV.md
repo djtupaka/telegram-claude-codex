@@ -99,3 +99,15 @@ RED/GREEN per validazione gruppi, wizard e azione menu. Harness isolato verifica
 Copia pulita in `/tmp/dev-bot-fresh-install-94roqzjq`: dipendenze installate con lockfile, configurazione fittizia creata con permessi `0600`, doctor e typecheck superati con HOME separata. Nessuna copia di `.env`, `.data` o credenziali personali; nessun avvio bot o accesso remoto effettuato. Le CLI già installate nell'host sono visibili tramite PATH: questa prova non equivale a installarle su un server vuoto.
 
 Verifica finale: `bun test` **286 pass, 0 fail**, 845 assertion, 43 file. Typecheck, lint e diff-check superati; soltanto i due avvisi di complessità preesistenti. Backup ripristinato e confrontato byte per byte: `/home/djtupaka/projects/dev-bot/.data/backups/setup-doctor-20260914T104908Z.tar.gz`, SHA-256 `cabaaea9bdc4dcb457b10dfdeccf00d0c8d3d61dfa3ac86b4c7ac82999ce2251`. Rilascio tramite push main e riavvio differito con ricevuta del commit; non è un deploy Coolify.
+
+## Nuovo progetto guidato
+
+Base `9c12365111c1dac226b6c12ff2e8809d7703db71`, attivazione precedente confermata dalla ricevuta success. Il pulsante Nuovo progetto e il comando senza nome avviano la richiesta del nome tramite ForceReply e la scelta Claude/Codex. Cartella e argomento vengono creati soltanto dopo la scelta; la scorciatoia con nome conserva il comportamento precedente. Stato temporaneo separato per utente/gruppo/argomento, scadenza dieci minuti, nonce per i pulsanti, annullamento senza cartelle e consumo prima della creazione per impedire doppio clic.
+
+RED osservato nell'harness reale isolato sul ForceReply mancante; GREEN dopo l'implementazione. Test su nomi invalidi, risposte fuori contesto, callback vecchie/duplicate, annullamento, scadenza e recupero dopo errore. Le risposte ai vecchi prompt del bot vengono riconosciute anche senza stato, evitando di inviare il nome come richiesta AI.
+
+Review indipendente: corretto il contesto del pulsante dal menu principale, che deve conservare il callback originale invece di simulare una risposta a un messaggio del bot. Harness esteso al percorso effettivo del menu. Suite completa: **290 pass, 0 fail**, 865 assertion, 44 file. Nessuna cartella progetto o argomento Telegram live creato per queste prove; il comportamento visivo nel client Telegram non è stato verificato manualmente.
+
+Backup con ripristino e confronto byte per byte: `/home/djtupaka/projects/dev-bot/.data/backups/project-wizard-20260914T105815Z.tar.gz`. SHA-256 `3f8b1751d368e262ffa913a2fe4f0093696ac73273786226c4f9b35475bc21ff`. Attivazione mediante riavvio differito e ricevuta per commit.
+
+Typecheck, lint e diff-check finali superati; restano soltanto i due avvisi di complessità preesistenti.

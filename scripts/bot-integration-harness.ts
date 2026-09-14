@@ -107,6 +107,7 @@ bot.botInfo = {
 } as typeof bot.botInfo;
 const calls: { method: string; payload: Record<string, unknown> }[] = [];
 let messageId = 100;
+const sentMessages: { id: number; payload: Record<string, unknown> }[] = [];
 bot.api.config.use((_previous, method, payload) => {
   const p = payload as Record<string, unknown>;
   calls.push({ method, payload: p });
@@ -115,6 +116,9 @@ bot.api.config.use((_previous, method, payload) => {
       ok: true,
       result: { message_thread_id: 55, name: p.name },
     }) as never;
+  }
+  if (method === "sendMessage") {
+    sentMessages.push({ id: messageId, payload: p });
   }
   const result =
     method === "sendMessage"
@@ -291,6 +295,109 @@ try {
     ),
     "New-topic picker must offer folder creation"
   );
+  const startWizard = callback(0);
+  if (startWizard.callback_query) {
+    startWizard.callback_query.data = "menu:run:nuovo_progetto";
+  }
+  await bot.handleUpdate(startWizard);
+  const prompt = sentMessages.findLast(
+    (m) =>
+      (m.payload.reply_markup as { force_reply?: boolean } | undefined)
+        ?.force_reply
+  );
+  assert(prompt, "New project button must ask for its name using ForceReply");
+  assert.equal(
+    (prompt.payload.reply_markup as { selective?: boolean }).selective,
+    false,
+    "Callback-started wizard must not selectively reply to a bot-authored menu"
+  );
+  const namedReply = message("wizard-created", 0);
+  if (namedReply.message) {
+    namedReply.message.reply_to_message = {
+      reply_to_message: undefined,
+      message_id: prompt.id,
+      date: 1,
+      chat: namedReply.message.chat,
+      from: { id: 123, is_bot: true, first_name: "Test" },
+      text: String(prompt.payload.text),
+    };
+  }
+  const beforeName = calls.length;
+  await bot.handleUpdate(namedReply);
+  assert(
+    !existsSync(join(root, "wizard-created")),
+    "Wizard must defer folder creation until provider choice"
+  );
+  const choices = calls
+    .slice(beforeName)
+    .flatMap((c) =>
+      (
+        (
+          c.payload.reply_markup as
+            | { inline_keyboard?: { callback_data?: string }[][] }
+            | undefined
+        )?.inline_keyboard ?? []
+      ).flat()
+    );
+  const chooseWizard = choices.find(
+    (b) =>
+      b.callback_data?.startsWith("nt_wizard:") &&
+      b.callback_data.endsWith(":claude")
+  );
+  assert(chooseWizard?.callback_data, "Wizard must offer an assistant choice");
+  const wrongScope = callback(8);
+  if (wrongScope.callback_query) {
+    wrongScope.callback_query.data = chooseWizard.callback_data;
+  }
+  await bot.handleUpdate(wrongScope);
+  assert(
+    !existsSync(join(root, "wizard-created")),
+    "Another topic cannot consume the wizard"
+  );
+  const confirmWizard = callback(0);
+  if (confirmWizard.callback_query) {
+    confirmWizard.callback_query.data = chooseWizard.callback_data;
+  }
+  const topicsBeforeWizard = calls.filter(
+    (c) => c.method === "createForumTopic"
+  ).length;
+  await bot.handleUpdate(confirmWizard);
+  assert(existsSync(join(root, "wizard-created")));
+  await bot.handleUpdate(confirmWizard);
+  assert.equal(
+    calls.filter((c) => c.method === "createForumTopic").length,
+    topicsBeforeWizard + 1,
+    "Duplicate wizard click must not create another topic"
+  );
+  assert.equal(agentCalls, 0, "Wizard names must not be sent to AI");
+  const beforeCancel = calls.length;
+  await bot.handleUpdate(message("/nuovo_progetto", 8));
+  const cancelChoices = calls
+    .slice(beforeCancel)
+    .flatMap((c) =>
+      (
+        (
+          c.payload.reply_markup as
+            | { inline_keyboard?: { callback_data?: string }[][] }
+            | undefined
+        )?.inline_keyboard ?? []
+      ).flat()
+    );
+  const cancelButton = cancelChoices.find(
+    (b) =>
+      b.callback_data?.startsWith("nt_wizard:") &&
+      b.callback_data.endsWith(":cancel")
+  );
+  assert(cancelButton?.callback_data, "Wizard must offer cancellation");
+  const cancelWizard = callback(8);
+  if (cancelWizard.callback_query) {
+    cancelWizard.callback_query.data = cancelButton.callback_data;
+  }
+  await bot.handleUpdate(cancelWizard);
+  assert(
+    calls.some((c) => String(c.payload.text).toLowerCase().includes("annullat"))
+  );
+
   await bot.handleUpdate(message("/nuovo_progetto demo-created", 0));
   assert(
     existsSync(join(root, "demo-created")),

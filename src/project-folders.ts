@@ -3,13 +3,17 @@ import { join } from "node:path";
 
 const PROJECT_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]{0,39}$/;
 
-/** Create only a new, direct child of the configured projects directory. */
-export function createProjectFolder(root: string, name: string): string {
+export function validateProjectName(name: string): void {
   if (!PROJECT_NAME.test(name)) {
     throw new Error(
       "Usa da 1 a 40 caratteri: lettere, numeri, trattini o underscore; inizia con una lettera o un numero."
     );
   }
+}
+
+/** Create only a new, direct child of the configured projects directory. */
+export function createProjectFolder(root: string, name: string): string {
+  validateProjectName(name);
   try {
     const path = join(realpathSync(root), name);
     mkdirSync(path, { mode: 0o700 });

@@ -54,6 +54,7 @@ import {
   UpdateReceivedEvent,
 } from "./observability";
 import { createProjectFolder } from "./project-folders";
+import { createProjectWizard } from "./project-wizard";
 import { runtime } from "./runtime";
 import {
   installThreadTransformer,
@@ -525,6 +526,10 @@ export function createBot(
 ) {
   const bot = new Bot(token);
   bot.api.config.use(menuReplyTransformer);
+  const projectWizard = createProjectWizard({
+    projectsDir,
+    createTopic: createTopicAndAnnounce,
+  });
   const allowedChats = new Set(allowedChatIds);
   const deniedChatsLogged = new Set<number>();
   /** Commands usable in a group's General area (everything else needs a topic). */
@@ -539,6 +544,9 @@ export function createBot(
   ]);
   /** Whether an update in the General area may proceed to the handlers. */
   const controlAllowed = (ctx: Context) => {
+    if (projectWizard.acceptsReply(ctx)) {
+      return true;
+    }
     const callbackData = ctx.callbackQuery?.data ?? "";
     if (callbackData.startsWith("nt_") || callbackData.startsWith("menu:")) {
       return true;
@@ -622,6 +630,12 @@ export function createBot(
     await next();
   });
 
+  bot.use(async (ctx, next) => {
+    if (!(await projectWizard.handle(ctx))) {
+      await next();
+    }
+  });
+
   let closing = false;
   const reservedRuns = new Set<string>();
   const scopeControllers = new Map<string, AbortController>();
@@ -695,6 +709,10 @@ export function createBot(
         running: busy(key),
       })),
     runCommand: async (ctx, command) => {
+      if (command === "nuovo_progetto") {
+        await projectWizard.begin(ctx);
+        return;
+      }
       const message = ctx.callbackQuery?.message;
       if (!(message?.date && ctx.from) || message.chat.type === "channel") {
         await ctx.reply("Menu non più disponibile. Riaprilo con /menu.");
@@ -1228,10 +1246,9 @@ export function createBot(
     return created;
   }
 
-  const newProjectHelp = `Per creare un progetto e la sua cartella su Ubuntu, scrivi:\n/nuovo_progetto nome-progetto\n\nCartella di destinazione: ${projectsDir}\nPoi scegli Claude o Codex per aprire l'argomento. Per un progetto già presente usa /nuova.`;
   bot.callbackQuery("nt_create", async (ctx) => {
     await ctx.answerCallbackQuery();
-    await ctx.reply(newProjectHelp);
+    await projectWizard.begin(ctx);
   });
   bot.command("nuovo_progetto", async (ctx) => {
     if (getScope(ctx).kind === "private") {
@@ -1242,7 +1259,7 @@ export function createBot(
     }
     const name = String(ctx.match ?? "").trim();
     if (!name) {
-      await ctx.reply(newProjectHelp);
+      await projectWizard.begin(ctx);
       return;
     }
     try {
