@@ -6,7 +6,7 @@ I conteggi riguardano gli originali con metadati validi, non lo spazio complessi
 
 ## Cartella visibile nel progetto
 
-I nuovi allegati vengono salvati in `<progetto>/telegram/<scope>/<AAAA-MM-GG>/`, con originale e metadati affiancati. Non viene aggiunta una seconda cartella con il nome del progetto. La cartella `telegram/` rimane consultabile direttamente dal filesystem. Alla creazione viene aggiunto un `.gitignore` interno con `*`, per evitare commit accidentali degli allegati; il `.gitignore` del progetto non viene modificato e un file interno già presente viene conservato.
+I nuovi allegati vengono salvati in `<progetto>/telegram/<scope>/<AAAA-MM-GG>/`, con originale e metadati affiancati. Non viene aggiunta una seconda cartella con il nome del progetto. La cartella `telegram/` rimane consultabile direttamente dal filesystem. Se il progetto selezionato è un collegamento simbolico, viene risolto nella directory reale prima di accedere all’archivio; i collegamenti all’interno dell’archivio restano vietati. Alla creazione viene aggiunto un `.gitignore` interno con `*`, per evitare commit accidentali degli allegati; il `.gitignore` del progetto non viene modificato e un file interno già presente viene conservato.
 
 I file ricevuti con la disposizione precedente restano nei percorsi originali: nessuno spostamento o migrazione automatica. Il gestore unisce i risultati della cartella nuova e dell’archivio precedente configurato da `ATTACHMENTS_DIR`, `UPLOADS_DIR` o dal percorso predefinito. Le operazioni accettano soltanto file nei due percorsi autorizzati del progetto. I conteggi combinano entrambi gli archivi entro lo stesso limite di scansione.
 

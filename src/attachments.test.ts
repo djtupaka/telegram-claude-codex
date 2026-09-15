@@ -115,3 +115,31 @@ test("project ignore file is preserved and symlink replacement is rejected", asy
   await symlink("/etc/passwd", ignore);
   await expect(storeAttachment(options)).rejects.toThrow("simbolico");
 });
+
+test("project aliases support upload and management while archive links remain blocked", async () => {
+  const project = await temporary();
+  const aliases = await temporary();
+  const alias = join(aliases, "project");
+  await symlink(project, alias);
+  const options = {
+    ...input(alias),
+    rootDir: join(alias, "telegram"),
+    layout: "project" as const,
+  };
+  const record = await storeAttachment(options);
+  expect(record.path.startsWith(`${project}/telegram/`)).toBe(true);
+  expect(await readFile(record.path, "utf8")).toBe("original bytes");
+  const { scanAttachments, purgeAttachment } = await import(
+    "./attachment-manager"
+  );
+  const entry = (await scanAttachments(options)).entries[0];
+  if (!entry) {
+    throw new Error("Uploaded file missing from manager");
+  }
+  await purgeAttachment(options, entry);
+  expect((await scanAttachments(options)).entries).toHaveLength(0);
+  await rm(join(project, "telegram"), { recursive: true });
+  const outside = await temporary();
+  await symlink(outside, join(project, "telegram"));
+  await expect(storeAttachment(options)).rejects.toThrow("simbolico");
+});

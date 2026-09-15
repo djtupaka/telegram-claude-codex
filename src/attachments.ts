@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { realpathSync } from "node:fs";
 import { lstat, mkdir, writeFile } from "node:fs/promises";
 import { basename, join, parse, resolve, sep } from "node:path";
 
@@ -44,6 +45,19 @@ const digest = (data: string | Uint8Array) =>
 const folder = (label: string, identity: string) =>
   `${safeName(label)}-${digest(identity).slice(0, HASH_LENGTH)}`;
 
+// Resolve only the selected project alias, never links inside its archive.
+export function projectArchiveRoot(
+  projectPath: string,
+  rootDir: string
+): string {
+  const project = resolve(projectPath);
+  const root = resolve(rootDir);
+  if (!root.startsWith(`${project}${sep}`)) {
+    throw new Error("Archivio non contenuto nel progetto selezionato.");
+  }
+  return join(realpathSync(project), root.slice(project.length + 1));
+}
+
 // Reject pre-existing symlink components so an archive cannot redirect writes.
 async function privateDirectory(directory: string): Promise<void> {
   const root = parse(directory).root;
@@ -73,9 +87,13 @@ export async function storeAttachment(
   input: AttachmentInput
 ): Promise<AttachmentRecord> {
   const projectPath = resolve(input.projectPath);
+  const rootDir =
+    input.layout === "project"
+      ? projectArchiveRoot(projectPath, input.rootDir)
+      : resolve(input.rootDir);
   const receivedAt = (input.receivedAt ?? new Date()).toISOString();
   const directory = join(
-    resolve(input.rootDir),
+    rootDir,
     ...(input.layout === "project"
       ? []
       : [folder(basename(projectPath), projectPath)]),
@@ -85,7 +103,7 @@ export async function storeAttachment(
   await privateDirectory(directory);
   if (input.layout === "project") {
     try {
-      await writeFile(join(resolve(input.rootDir), ".gitignore"), "*\n", {
+      await writeFile(join(rootDir, ".gitignore"), "*\n", {
         flag: "wx",
         mode: 0o600,
       });
@@ -93,9 +111,7 @@ export async function storeAttachment(
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
         throw error;
       }
-      const ignoreInfo = await lstat(
-        join(resolve(input.rootDir), ".gitignore")
-      );
+      const ignoreInfo = await lstat(join(rootDir, ".gitignore"));
       if (!ignoreInfo.isFile() || ignoreInfo.isSymbolicLink()) {
         throw new Error(
           "File .gitignore non valido: collegamento simbolico o directory."

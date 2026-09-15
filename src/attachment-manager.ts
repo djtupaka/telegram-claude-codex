@@ -9,7 +9,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
-import type { AttachmentRecord } from "./attachments";
+import { type AttachmentRecord, projectArchiveRoot } from "./attachments";
 
 export interface AttachmentLocation {
   layout?: "project";
@@ -32,7 +32,7 @@ const safeName = (name: string) =>
     .slice(-120) || "allegato";
 function projectDirectory(location: AttachmentLocation) {
   if (location.layout === "project") {
-    return resolve(location.rootDir);
+    return projectArchiveRoot(location.projectPath, location.rootDir);
   }
   const project = resolve(location.projectPath);
   return join(
